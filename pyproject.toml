@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.162.0",
+    "pyjwt>=2.15.1",
 ]
 
 [dependency-groups]
@@ -14,3 +15,7 @@ dev = [
     "workers-py",
     "workers-runtime-sdk",
 ]
+
+[tool.ruff.lint]
+# FastAPI dependency injection uses Depends() in argument defaults by design.
+ignore = ["B008"]
