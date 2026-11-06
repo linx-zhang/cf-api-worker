@@ -66,3 +66,7 @@ jspm_packages/
 python_modules/
 .venv/
 .venv-workers/
+
+# machine-local uv config (contains absolute cache path) and generated pywrangler lock
+uv.toml
+pylock.toml
