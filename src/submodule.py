@@ -1,2 +1,7 @@
+count = 0
+
+
 def get_hello_message():
-    return "Hello World!"
+    global count
+    count += 1
+    return str(count)
