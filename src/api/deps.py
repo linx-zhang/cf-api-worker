@@ -2,18 +2,21 @@
 
 from __future__ import annotations
 
-from fastapi import Depends, Request, status
+from fastapi import Depends, Query, Request, status
 
-from config import Settings
+from api.responses import ApiError
 from core.constants import (
     CODE_FORBIDDEN,
     CODE_UNAUTHORIZED,
     DETAIL_FORBIDDEN,
     DETAIL_UNAUTHORIZED,
 )
-from db import Database
-from responses import ApiError
-from security import decode_access_token
+from core.security import decode_access_token
+from infra.config import Settings
+from infra.db import Database
+
+DEFAULT_PAGE_LIMIT = 20
+MAX_PAGE_LIMIT = 100
 
 _UNAUTHORIZED = ApiError(
     CODE_UNAUTHORIZED,
@@ -69,3 +72,11 @@ async def require_admin(user: dict = Depends(get_current_user)) -> dict:
             status.HTTP_403_FORBIDDEN,
         )
     return user
+
+
+def pagination(
+    limit: int = Query(DEFAULT_PAGE_LIMIT, ge=1, le=MAX_PAGE_LIMIT),
+    offset: int = Query(0, ge=0),
+) -> tuple[int, int]:
+    """Validate the shared list pagination query parameters."""
+    return limit, offset

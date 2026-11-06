@@ -5,7 +5,9 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, status
 from fastapi.responses import JSONResponse
 
-from config import Settings
+from api.deps import get_current_user, get_db, get_settings
+from api.models import LoginIn, RegisterIn, TokenOut, UserOut
+from api.responses import ApiError, success
 from core.constants import (
     CODE_EMAIL_EXISTS,
     CODE_INVALID_CREDENTIALS,
@@ -15,11 +17,10 @@ from core.constants import (
     DETAIL_INVITE_CODE_CONFLICT,
     DETAIL_INVITE_CODE_INVALID,
 )
-from db import Database
-from deps import get_current_user, get_db, get_settings
-from models import LoginIn, RegisterIn, TokenOut, UserOut
-from responses import ApiError, success
-from security import create_access_token, hash_password, verify_password
+from core.security import create_access_token
+from infra.config import Settings
+from infra.db import Database
+from infra.passwords import hash_password, verify_password
 
 router = APIRouter()
 

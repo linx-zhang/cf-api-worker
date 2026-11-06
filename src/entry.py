@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from workers import WorkerEntrypoint
 
-from app import app
+from api.app import app
 
 
 class Default(WorkerEntrypoint):

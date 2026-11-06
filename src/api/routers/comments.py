@@ -5,6 +5,9 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, status
 from fastapi.responses import JSONResponse
 
+from api.deps import get_current_user, get_db, require_admin
+from api.models import CommentIn, CommentOut
+from api.responses import ApiError, success
 from core.constants import (
     CODE_INTERNAL_ERROR,
     CODE_INVALID_PARENT_COMMENT,
@@ -15,10 +18,7 @@ from core.constants import (
     DETAIL_INVALID_PARENT_COMMENT,
     DETAIL_POST_NOT_FOUND,
 )
-from db import Database
-from deps import get_current_user, get_db, require_admin
-from models import CommentIn, CommentOut
-from responses import ApiError, success
+from infra.db import Database
 
 router = APIRouter()
 delete_router = APIRouter()

@@ -6,8 +6,8 @@ from fastapi import FastAPI
 from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import Response
 
-from responses import install_error_handlers, success
-from routers import auth, comments, posts
+from api.responses import install_error_handlers, success
+from api.routers import auth, comments, posts
 
 
 class Preflight204CORSMiddleware(CORSMiddleware):
