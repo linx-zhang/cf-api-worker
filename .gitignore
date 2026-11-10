@@ -76,3 +76,9 @@ worker-configuration.d.ts
 
 # IDE
 .idea/
+
+# python/build caches
+__pycache__/
+.ruff_cache/
+.uv-cache/
+.wrangler-xdg/
