@@ -1,7 +1,8 @@
-"""Admin-only management of invite codes and users."""
+"""Admin-only management of invite codes, users and activity logs."""
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Query, status
@@ -9,6 +10,7 @@ from fastapi.responses import JSONResponse
 
 from api.deps import get_db, pagination, require_permission
 from api.models import (
+    ActivityOut,
     AdminUserOut,
     InviteCodeCreateIn,
     InviteCodeOut,
@@ -19,21 +21,25 @@ from core.constants import (
     CODE_CANNOT_CHANGE_OWN_ROLE,
     CODE_CANNOT_DELETE_SELF,
     CODE_EMAIL_EXISTS,
+    CODE_INVALID_TIMESTAMP,
     CODE_INVITE_CODE_IN_USE,
     CODE_LAST_ADMIN_REQUIRED,
     CODE_NOT_FOUND,
     DETAIL_CANNOT_CHANGE_OWN_ROLE,
     DETAIL_CANNOT_DELETE_SELF,
     DETAIL_EMAIL_EXISTS,
+    DETAIL_INVALID_TIMESTAMP,
     DETAIL_INVITE_CODE_DELETED,
     DETAIL_INVITE_CODE_IN_USE,
     DETAIL_INVITE_CODE_NOT_FOUND,
     DETAIL_INVITE_CODES_CREATED,
     DETAIL_LAST_ADMIN_REQUIRED,
+    DETAIL_TIMESTAMP_RANGE,
     DETAIL_USER_DELETED,
     DETAIL_USER_NOT_FOUND,
 )
 from core.permissions import (
+    ACTIVITY_READ_ANY,
     INVITE_CODE_CREATE_ANY,
     INVITE_CODE_DELETE_ANY,
     INVITE_CODE_READ_ANY,
@@ -41,6 +47,7 @@ from core.permissions import (
     USER_READ_ANY,
     USER_UPDATE_ANY,
 )
+from core.utils import sqlite_timestamp
 from infra.db import Database
 from infra.invite_codes import (
     delete_unused,
@@ -52,8 +59,12 @@ from infra.invite_codes import (
 router = APIRouter()
 
 _ADMIN_USER_SELECT = (
-    "SELECT u.id, u.email, u.role, u.created_at, u.deleted_at FROM users u"
+    "SELECT u.id, u.email, u.role, u.created_at, u.deleted_at, "
+    "(SELECT MAX(e.created_at) FROM activity_events e "
+    "WHERE e.user_id = u.id) AS last_active_at FROM users u"
 )
+
+_TIMESTAMP_HELP = "expected an ISO date/datetime or epoch milliseconds"
 
 
 def _like_pattern(term: str) -> str:
@@ -98,6 +109,26 @@ def _ensure_role_change_allowed(
             DETAIL_LAST_ADMIN_REQUIRED,
             status.HTTP_409_CONFLICT,
         )
+
+
+def _parse_timestamp_bound(raw: str) -> str:
+    """Accept epoch milliseconds or ISO 8601, return a D1-comparable string."""
+    text = raw.strip()
+    try:
+        millis = int(text)
+    except ValueError:
+        try:
+            moment = datetime.fromisoformat(text)
+        except ValueError:
+            raise ApiError(
+                CODE_INVALID_TIMESTAMP,
+                DETAIL_INVALID_TIMESTAMP.format(reason=_TIMESTAMP_HELP),
+                422,
+            ) from None
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=UTC)
+        return sqlite_timestamp(moment.astimezone(UTC))
+    return sqlite_timestamp(datetime.fromtimestamp(millis / 1000, UTC))
 
 
 @router.post("/invite-codes", status_code=status.HTTP_201_CREATED)
@@ -279,3 +310,57 @@ async def delete_user(
     if changed == 0:
         raise ApiError(CODE_NOT_FOUND, DETAIL_USER_NOT_FOUND, status.HTTP_404_NOT_FOUND)
     return success({"id": user_id}, detail=DETAIL_USER_DELETED)
+
+
+@router.get("/activity")
+async def list_activity(
+    user_id: int | None = Query(default=None, ge=1),
+    type_filter: Literal["page_view", "heartbeat", "page_leave"] | None = Query(
+        default=None, alias="type"
+    ),
+    from_: str | None = Query(default=None, alias="from"),
+    to: str | None = Query(default=None),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    admin: dict = Depends(require_permission(ACTIVITY_READ_ANY)),
+    db: Database = Depends(get_db),
+) -> JSONResponse:
+    """Query client activity; ``from``/``to`` filter on server receive time."""
+    clauses: list[str] = []
+    params: list[object] = []
+    if user_id is not None:
+        clauses.append("e.user_id = ?")
+        params.append(user_id)
+    if type_filter is not None:
+        clauses.append("e.type = ?")
+        params.append(type_filter)
+    start = _parse_timestamp_bound(from_) if from_ else None
+    end = _parse_timestamp_bound(to) if to else None
+    if start is not None and end is not None and start > end:
+        raise ApiError(
+            CODE_INVALID_TIMESTAMP,
+            DETAIL_TIMESTAMP_RANGE,
+            422,
+        )
+    if start is not None:
+        clauses.append("e.created_at >= ?")
+        params.append(start)
+    if end is not None:
+        clauses.append("e.created_at <= ?")
+        params.append(end)
+    where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+
+    total_row = await db.fetch_one(
+        f"SELECT COUNT(*) AS total FROM activity_events e{where}", params
+    )
+    total = int(total_row["total"]) if total_row else 0
+    rows = await db.fetch_all(
+        "SELECT e.id, e.user_id, u.email AS user_email, e.type, e.path, e.ts, "
+        "e.duration_ms, e.created_at FROM activity_events e "
+        f"JOIN users u ON u.id = e.user_id{where} "
+        "ORDER BY e.created_at DESC, e.id DESC LIMIT ? OFFSET ?",
+        [*params, limit, offset],
+    )
+    return success(
+        {"items": [ActivityOut(**row).model_dump() for row in rows], "total": total}
+    )

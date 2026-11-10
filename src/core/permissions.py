@@ -34,6 +34,9 @@ USER_READ_ANY = "user:read:any"
 USER_UPDATE_ANY = "user:update:any"
 USER_DELETE_ANY = "user:delete:any"
 
+ACTIVITY_WRITE_SELF = "activity:write:self"
+ACTIVITY_READ_ANY = "activity:read:any"
+
 # Shared by every signed-in role.
 _MEMBER_PERMISSIONS = (
     ACCOUNT_READ_SELF,
@@ -42,6 +45,7 @@ _MEMBER_PERMISSIONS = (
     POST_DELETE_OWN,
     COMMENT_CREATE_ANY,
     COMMENT_DELETE_OWN,
+    ACTIVITY_WRITE_SELF,
 )
 
 _ADMIN_PERMISSIONS = (
@@ -54,6 +58,7 @@ _ADMIN_PERMISSIONS = (
     USER_READ_ANY,
     USER_UPDATE_ANY,
     USER_DELETE_ANY,
+    ACTIVITY_READ_ANY,
 )
 
 ROLE_PERMISSIONS: dict[str, tuple[str, ...]] = {

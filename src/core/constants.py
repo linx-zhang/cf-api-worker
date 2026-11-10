@@ -29,6 +29,8 @@ CODE_CANNOT_CHANGE_OWN_ROLE = "cannot_change_own_role"
 CODE_LAST_ADMIN_REQUIRED = "last_admin_required"
 CODE_INVALID_ROLE = "invalid_role"
 CODE_CANNOT_DELETE_SELF = "cannot_delete_self"
+CODE_INVALID_EVENT_TYPE = "invalid_event_type"
+CODE_INVALID_TIMESTAMP = "invalid_timestamp"
 CODE_INTERNAL_ERROR = "internal_error"
 
 # --- Details ---------------------------------------------------------------
@@ -79,3 +81,13 @@ DETAIL_USER_DELETED = "user deleted"
 
 # Author display for soft-deleted accounts.
 DELETED_AUTHOR_NAME = "已注销"
+
+# Client activity logging.
+DETAIL_ACTIVITY_RECORDED = "activity recorded"
+DETAIL_INVALID_EVENT_TYPE = (
+    "event type must be one of: page_view, heartbeat, page_leave: {reason}"
+)
+DETAIL_INVALID_TIMESTAMP = (
+    "timestamp must be an ISO date/datetime or epoch milliseconds: {reason}"
+)
+DETAIL_TIMESTAMP_RANGE = "from must not be later than to"

@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+import time
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from core.utils import normalize_email
+
+# Client timestamps older than this, or further in the future than the
+# tolerance, are rejected as clock errors.
+ACTIVITY_TS_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000
+ACTIVITY_TS_FUTURE_TOLERANCE_MS = 5 * 60 * 1000
 
 
 class RegisterIn(BaseModel):
@@ -109,6 +115,40 @@ class UserUpdateIn(BaseModel):
         if self.email is None and self.role is None:
             raise ValueError("at least one of email or role is required")
         return self
+
+
+class ActivityEventIn(BaseModel):
+    type: Literal["page_view", "heartbeat", "page_leave"]
+    path: str = Field(min_length=1, max_length=512)
+    ts: int
+    duration_ms: int | None = Field(default=None, ge=0)
+
+    @field_validator("ts")
+    @classmethod
+    def _ts_range(cls, value: int) -> int:
+        now_ms = int(time.time() * 1000)
+        if value < now_ms - ACTIVITY_TS_MAX_AGE_MS:
+            raise ValueError("ts must be epoch milliseconds within the last 30 days")
+        if value > now_ms + ACTIVITY_TS_FUTURE_TOLERANCE_MS:
+            raise ValueError(
+                "ts must be epoch milliseconds no more than 5 minutes in the future"
+            )
+        return value
+
+
+class ActivityBatchIn(BaseModel):
+    events: list[ActivityEventIn] = Field(min_length=1, max_length=50)
+
+
+class ActivityOut(BaseModel):
+    id: int
+    user_id: int
+    user_email: str
+    type: str
+    path: str
+    ts: int
+    duration_ms: int | None = None
+    created_at: str
 
 
 class InviteCodeCreateIn(BaseModel):
