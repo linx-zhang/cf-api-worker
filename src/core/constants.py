@@ -62,6 +62,7 @@ DETAIL_COMMENT_NOT_FOUND = "comment not found"
 DETAIL_POST_CREATE_FAILED = "post was not created"
 DETAIL_COMMENT_CREATE_FAILED = "comment was not created"
 DETAIL_POST_DELETED = "post deleted"
+DETAIL_POSTS_DELETED = "posts deleted"
 DETAIL_COMMENT_DELETED = "comment deleted"
 DETAIL_INVALID_PARENT_COMMENT = "parent comment does not belong to this post"
 

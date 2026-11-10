@@ -12,7 +12,7 @@ from api.deps import (
     pagination,
     require_permission,
 )
-from api.models import PostIn, PostOut, PostUpdateIn
+from api.models import PostBatchDeleteIn, PostIn, PostOut, PostUpdateIn
 from api.responses import ApiError, success
 from core.constants import (
     CODE_INTERNAL_ERROR,
@@ -21,6 +21,7 @@ from core.constants import (
     DETAIL_POST_CREATE_FAILED,
     DETAIL_POST_DELETED,
     DETAIL_POST_NOT_FOUND,
+    DETAIL_POSTS_DELETED,
 )
 from core.permissions import (
     POST_CREATE_ANY,
@@ -56,6 +57,32 @@ async def _get_post(db: Database, post_id: int) -> dict:
     if post is None:
         raise ApiError(CODE_NOT_FOUND, DETAIL_POST_NOT_FOUND, status.HTTP_404_NOT_FOUND)
     return post
+
+
+async def _soft_delete_posts(
+    db: Database, post_ids: list[int]
+) -> tuple[list[int], int]:
+    """Soft delete live posts and their comments in bulk.
+
+    Returns the ids that were actually deleted (missing or already deleted ids
+    are simply absent) and the number of comments removed along with them.
+    """
+    marks = ", ".join("?" for _ in post_ids)
+    rows = await db.fetch_all(
+        "UPDATE posts SET deleted_at = datetime('now') "
+        f"WHERE id IN ({marks}) AND deleted_at IS NULL RETURNING id",
+        post_ids,
+    )
+    deleted_ids = [int(row["id"]) for row in rows]
+    if not deleted_ids:
+        return [], 0
+    inner = ", ".join("?" for _ in deleted_ids)
+    deleted_comments = await db.execute(
+        "UPDATE comments SET deleted_at = datetime('now') "
+        f"WHERE post_id IN ({inner}) AND deleted_at IS NULL",
+        deleted_ids,
+    )
+    return deleted_ids, deleted_comments
 
 
 @router.get("")
@@ -95,6 +122,28 @@ async def create_post(
         )
     post["author_name"] = display_name(user["email"])
     return success(PostOut(**post).model_dump(), status_code=status.HTTP_201_CREATED)
+
+
+@router.post("/batch-delete")
+async def batch_delete_posts(
+    payload: PostBatchDeleteIn,
+    user: dict = Depends(require_permission(POST_DELETE_ANY)),
+    db: Database = Depends(get_db),
+) -> JSONResponse:
+    """Soft delete up to 50 posts at once, reporting per-id failures."""
+    deleted_ids, _ = await _soft_delete_posts(db, payload.ids)
+    deleted_set = set(deleted_ids)
+    return success(
+        {
+            "deleted": [pid for pid in payload.ids if pid in deleted_set],
+            "failed": [
+                {"id": pid, "code": CODE_NOT_FOUND, "detail": DETAIL_POST_NOT_FOUND}
+                for pid in payload.ids
+                if pid not in deleted_set
+            ],
+        },
+        detail=DETAIL_POSTS_DELETED,
+    )
 
 
 @router.patch("/{post_id}")
@@ -140,16 +189,7 @@ async def delete_post(
         user, post["author_id"], POST_DELETE_OWN, POST_DELETE_ANY
     )
 
-    deleted_comments = await db.execute(
-        "UPDATE comments SET deleted_at = datetime('now') "
-        "WHERE post_id = ? AND deleted_at IS NULL",
-        (post_id,),
-    )
-    await db.execute(
-        "UPDATE posts SET deleted_at = datetime('now') "
-        "WHERE id = ? AND deleted_at IS NULL",
-        (post_id,),
-    )
+    _, deleted_comments = await _soft_delete_posts(db, [post_id])
 
     return success(
         {"id": post_id, "deleted_comments": deleted_comments},

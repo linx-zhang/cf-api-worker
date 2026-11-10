@@ -80,6 +80,16 @@ class PostOut(BaseModel):
     updated_at: str
 
 
+class PostBatchDeleteIn(BaseModel):
+    ids: list[int] = Field(min_length=1, max_length=50)
+
+    @field_validator("ids")
+    @classmethod
+    def _distinct(cls, value: list[int]) -> list[int]:
+        """Collapse duplicates while keeping the order the client sent."""
+        return list(dict.fromkeys(value))
+
+
 class CommentIn(BaseModel):
     body: str = Field(min_length=1, max_length=5000)
     parent_id: int | None = None
