@@ -17,7 +17,6 @@ from core.constants import (
     CODE_INTERNAL_ERROR,
     CODE_INVALID_PARENT_COMMENT,
     CODE_NOT_FOUND,
-    DELETED_AUTHOR_NAME,
     DETAIL_COMMENT_CREATE_FAILED,
     DETAIL_COMMENT_DELETED,
     DETAIL_COMMENT_NOT_FOUND,
@@ -29,7 +28,7 @@ from core.permissions import (
     COMMENT_DELETE_ANY,
     COMMENT_DELETE_OWN,
 )
-from core.utils import display_name
+from core.utils import author_display_name, profile_display_name
 from infra.db import Database
 
 router = APIRouter()
@@ -37,18 +36,17 @@ delete_router = APIRouter()
 
 _COMMENT_SELECT = (
     "SELECT c.id, c.post_id, c.author_id, u.email AS author_email, "
-    "u.deleted_at AS author_deleted_at, c.parent_id, "
-    "c.body, c.created_at FROM comments c JOIN users u ON u.id = c.author_id "
-    "WHERE c.deleted_at IS NULL"
+    "u.deleted_at AS author_deleted_at, u.nickname AS author_nickname, "
+    "u.first_name AS author_first_name, u.last_name AS author_last_name, "
+    "c.parent_id, c.body, c.created_at FROM comments c "
+    "JOIN users u ON u.id = c.author_id WHERE c.deleted_at IS NULL"
 )
 
 
 def _comment_out(row: dict) -> dict:
     """Map a joined row to the public shape (no email, only a display name)."""
     data = dict(row)
-    email = data.pop("author_email", "") or ""
-    deleted = data.pop("author_deleted_at", None)
-    data["author_name"] = DELETED_AUTHOR_NAME if deleted else display_name(email)
+    data["author_name"] = author_display_name(data)
     return CommentOut(**data).model_dump()
 
 
@@ -102,7 +100,12 @@ async def create_comment(
             DETAIL_COMMENT_CREATE_FAILED,
             status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
-    comment["author_name"] = display_name(user["email"])
+    comment["author_name"] = profile_display_name(
+        user.get("nickname"),
+        user.get("first_name"),
+        user.get("last_name"),
+        user["email"],
+    )
     return success(
         CommentOut(**comment).model_dump(), status_code=status.HTTP_201_CREATED
     )

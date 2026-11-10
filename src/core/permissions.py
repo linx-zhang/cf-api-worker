@@ -13,6 +13,7 @@ from __future__ import annotations
 PUBLIC = "PUBLIC"
 
 ACCOUNT_READ_SELF = "account:read:self"
+ACCOUNT_UPDATE_SELF = "account:update:self"
 
 POST_READ_ANY = "post:read:any"
 POST_CREATE_ANY = "post:create:any"
@@ -40,6 +41,7 @@ ACTIVITY_READ_ANY = "activity:read:any"
 # Shared by every signed-in role.
 _MEMBER_PERMISSIONS = (
     ACCOUNT_READ_SELF,
+    ACCOUNT_UPDATE_SELF,
     POST_CREATE_ANY,
     POST_UPDATE_OWN,
     POST_DELETE_OWN,

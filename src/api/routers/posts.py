@@ -17,7 +17,6 @@ from api.responses import ApiError, success
 from core.constants import (
     CODE_INTERNAL_ERROR,
     CODE_NOT_FOUND,
-    DELETED_AUTHOR_NAME,
     DETAIL_POST_CREATE_FAILED,
     DETAIL_POST_DELETED,
     DETAIL_POST_NOT_FOUND,
@@ -30,25 +29,24 @@ from core.permissions import (
     POST_UPDATE_ANY,
     POST_UPDATE_OWN,
 )
-from core.utils import display_name
+from core.utils import author_display_name, profile_display_name
 from infra.db import Database
 
 router = APIRouter()
 
 _POST_SELECT = (
     "SELECT p.id, p.author_id, u.email AS author_email, "
-    "u.deleted_at AS author_deleted_at, p.title, p.body_md, "
-    "p.created_at, p.updated_at FROM posts p JOIN users u ON u.id = p.author_id "
-    "WHERE p.deleted_at IS NULL"
+    "u.deleted_at AS author_deleted_at, u.nickname AS author_nickname, "
+    "u.first_name AS author_first_name, u.last_name AS author_last_name, "
+    "p.title, p.body_md, p.created_at, p.updated_at FROM posts p "
+    "JOIN users u ON u.id = p.author_id WHERE p.deleted_at IS NULL"
 )
 
 
 def _post_out(row: dict) -> dict:
     """Map a joined row to the public shape (no email, only a display name)."""
     data = dict(row)
-    email = data.pop("author_email", "") or ""
-    deleted = data.pop("author_deleted_at", None)
-    data["author_name"] = DELETED_AUTHOR_NAME if deleted else display_name(email)
+    data["author_name"] = author_display_name(data)
     return PostOut(**data).model_dump()
 
 
@@ -120,7 +118,12 @@ async def create_post(
             DETAIL_POST_CREATE_FAILED,
             status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
-    post["author_name"] = display_name(user["email"])
+    post["author_name"] = profile_display_name(
+        user.get("nickname"),
+        user.get("first_name"),
+        user.get("last_name"),
+        user["email"],
+    )
     return success(PostOut(**post).model_dump(), status_code=status.HTTP_201_CREATED)
 
 

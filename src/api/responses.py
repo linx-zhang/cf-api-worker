@@ -88,6 +88,11 @@ def _validation_summary(errors: list[dict], path: str = "") -> tuple[str, str]:
     first = errors[0] if errors else {}
     loc = [str(part) for part in first.get("loc", ())]
     field = loc[-1] if loc else ""
+    if first.get("type") == "extra_forbidden":
+        # An unknown field (e.g. email/role on the self-service profile patch)
+        # is not a field-level value error, so report it as a plain 422.
+        message = str(first.get("msg", DETAIL_INVALID_VALUE))
+        return CODE_VALIDATION_ERROR, DETAIL_VALIDATION_ERROR.format(reason=message)
     if field == "role" and path.startswith("/admin/users/"):
         # Admin user management allows all three roles, unlike invite creation.
         code, template = CODE_INVALID_ROLE, DETAIL_INVALID_ROLE

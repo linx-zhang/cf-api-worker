@@ -5,7 +5,14 @@ from __future__ import annotations
 import time
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
 from core.utils import normalize_email
 
@@ -41,6 +48,10 @@ class UserOut(BaseModel):
     email: str
     role: str
     created_at: str
+    nickname: str | None = None
+    first_name: str | None = None
+    last_name: str | None = None
+    avatar_url: str | None = None
 
 
 class MeOut(UserOut):
@@ -109,7 +120,64 @@ class AdminUserOut(UserOut):
     last_active_at: str | None = None
 
 
-class UserUpdateIn(BaseModel):
+PROFILE_FIELDS = ("nickname", "first_name", "last_name", "avatar_url")
+
+_PROFILE_LIMITS = {
+    "nickname": 32,
+    "first_name": 64,
+    "last_name": 64,
+    "avatar_url": 512,
+}
+
+
+def _clean_profile_text(value: str | None, field: str) -> str | None:
+    """Trim a profile field; blank input clears it, over-long input is rejected."""
+    if value is None:
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    limit = _PROFILE_LIMITS[field]
+    if len(text) > limit:
+        raise ValueError(f"{field} must be at most {limit} characters")
+    return text
+
+
+class ProfileFieldsIn(BaseModel):
+    """Optional profile fields shared by the self-service and admin updates."""
+
+    nickname: str | None = None
+    first_name: str | None = None
+    last_name: str | None = None
+    avatar_url: str | None = None
+
+    @field_validator("nickname", "first_name", "last_name")
+    @classmethod
+    def _text(cls, value: str | None, info: ValidationInfo) -> str | None:
+        return _clean_profile_text(value, info.field_name)
+
+    @field_validator("avatar_url")
+    @classmethod
+    def _avatar_url(cls, value: str | None) -> str | None:
+        text = _clean_profile_text(value, "avatar_url")
+        if text is not None and not text.startswith(("http://", "https://")):
+            raise ValueError("avatar_url must start with http:// or https://")
+        return text
+
+
+class ProfileUpdateIn(ProfileFieldsIn):
+    """Self-service patch: email and role are rejected as unknown fields."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def _at_least_one_field(self) -> ProfileUpdateIn:
+        if not self.model_fields_set:
+            raise ValueError("at least one profile field is required")
+        return self
+
+
+class UserUpdateIn(ProfileFieldsIn):
     email: str | None = None
     role: Literal["user", "internal", "admin"] | None = None
 
@@ -122,8 +190,8 @@ class UserUpdateIn(BaseModel):
 
     @model_validator(mode="after")
     def _at_least_one_field(self) -> UserUpdateIn:
-        if self.email is None and self.role is None:
-            raise ValueError("at least one of email or role is required")
+        if not self.model_fields_set:
+            raise ValueError("at least one of email, role or profile is required")
         return self
 
 

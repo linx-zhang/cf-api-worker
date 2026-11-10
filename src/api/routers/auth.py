@@ -5,8 +5,16 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, status
 from fastapi.responses import JSONResponse
 
-from api.deps import get_current_user, get_db, get_settings
-from api.models import LoginIn, MeOut, RegisterIn, TokenOut, UserOut
+from api.deps import get_current_user, get_db, get_settings, require_permission
+from api.models import (
+    PROFILE_FIELDS,
+    LoginIn,
+    MeOut,
+    ProfileUpdateIn,
+    RegisterIn,
+    TokenOut,
+    UserOut,
+)
 from api.responses import ApiError, success
 from core.constants import (
     CODE_EMAIL_EXISTS,
@@ -17,7 +25,7 @@ from core.constants import (
     DETAIL_INVITE_CODE_CONFLICT,
     DETAIL_INVITE_CODE_INVALID,
 )
-from core.permissions import permissions_for_role
+from core.permissions import ACCOUNT_UPDATE_SELF, permissions_for_role
 from core.security import create_access_token
 from infra.config import Settings
 from infra.db import Database
@@ -25,6 +33,10 @@ from infra.invite_codes import UNUSED_CONDITION
 from infra.passwords import hash_password, verify_password
 
 router = APIRouter()
+
+_USER_COLUMNS = (
+    "id, email, role, created_at, nickname, first_name, last_name, avatar_url"
+)
 
 
 def _token_response(user: dict, settings: Settings) -> dict:
@@ -67,7 +79,7 @@ async def register(
     try:
         user = await db.insert_returning(
             "INSERT INTO users (email, password_hash, role) VALUES (?, ?, ?) "
-            "RETURNING id, email, role, created_at",
+            f"RETURNING {_USER_COLUMNS}",
             (payload.email, password_hash, role),
         )
     except Exception as exc:  # D1 surfaces SQLite constraint errors as JS exceptions
@@ -103,7 +115,7 @@ async def login(
     settings: Settings = Depends(get_settings),
 ) -> JSONResponse:
     user = await db.fetch_one(
-        "SELECT id, email, role, created_at, password_hash FROM users "
+        f"SELECT {_USER_COLUMNS}, password_hash FROM users "
         "WHERE email = ? AND deleted_at IS NULL",
         (payload.email,),
     )
@@ -124,4 +136,28 @@ async def login(
 async def me(user: dict = Depends(get_current_user)) -> JSONResponse:
     return success(
         MeOut(**user, permissions=permissions_for_role(user["role"])).model_dump()
+    )
+
+
+@router.patch("/me")
+async def update_me(
+    payload: ProfileUpdateIn,
+    user: dict = Depends(require_permission(ACCOUNT_UPDATE_SELF)),
+    db: Database = Depends(get_db),
+) -> JSONResponse:
+    """Update the caller's own profile; email and role are not editable here."""
+    provided = [field for field in PROFILE_FIELDS if field in payload.model_fields_set]
+    assignments = ", ".join(f"{field} = ?" for field in provided)
+    params = [getattr(payload, field) for field in provided]
+    params.append(user["id"])
+    await db.execute(
+        f"UPDATE users SET {assignments} WHERE id = ? AND deleted_at IS NULL",
+        params,
+    )
+    updated = await db.fetch_one(
+        f"SELECT {_USER_COLUMNS} FROM users WHERE id = ? AND deleted_at IS NULL",
+        (user["id"],),
+    )
+    return success(
+        MeOut(**updated, permissions=permissions_for_role(updated["role"])).model_dump()
     )

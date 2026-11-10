@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 
 from api.deps import get_db, pagination, require_permission
 from api.models import (
+    PROFILE_FIELDS,
     ActivityOut,
     AdminUserOut,
     InviteCodeCreateIn,
@@ -60,6 +61,7 @@ router = APIRouter()
 
 _ADMIN_USER_SELECT = (
     "SELECT u.id, u.email, u.role, u.created_at, u.deleted_at, "
+    "u.nickname, u.first_name, u.last_name, u.avatar_url, "
     "(SELECT MAX(e.created_at) FROM activity_events e "
     "WHERE e.user_id = u.id) AS last_active_at FROM users u"
 )
@@ -254,6 +256,12 @@ async def update_user(
     if role_changing:
         assignments.append("role = ?")
         params.append(payload.role)
+    for field in PROFILE_FIELDS:
+        if field in payload.model_fields_set and getattr(payload, field) != target.get(
+            field
+        ):
+            assignments.append(f"{field} = ?")
+            params.append(getattr(payload, field))
 
     if assignments:
         params.append(user_id)
