@@ -31,6 +31,7 @@ CODE_INVALID_ROLE = "invalid_role"
 CODE_CANNOT_DELETE_SELF = "cannot_delete_self"
 CODE_INVALID_EVENT_TYPE = "invalid_event_type"
 CODE_INVALID_TIMESTAMP = "invalid_timestamp"
+CODE_RATE_LIMITED = "rate_limited"
 CODE_INTERNAL_ERROR = "internal_error"
 
 # --- Details ---------------------------------------------------------------
@@ -91,3 +92,7 @@ DETAIL_INVALID_TIMESTAMP = (
     "timestamp must be an ISO date/datetime or epoch milliseconds: {reason}"
 )
 DETAIL_TIMESTAMP_RANGE = "from must not be later than to"
+DETAIL_ACTIVITY_RATE_LIMITED = (
+    "activity was reported too frequently; "
+    "at most one batch is accepted per throttle window"
+)
