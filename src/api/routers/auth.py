@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, status
 from fastapi.responses import JSONResponse
 
 from api.deps import get_current_user, get_db, get_settings
-from api.models import LoginIn, RegisterIn, TokenOut, UserOut
+from api.models import LoginIn, MeOut, RegisterIn, TokenOut, UserOut
 from api.responses import ApiError, success
 from core.constants import (
     CODE_EMAIL_EXISTS,
@@ -17,16 +17,18 @@ from core.constants import (
     DETAIL_INVITE_CODE_CONFLICT,
     DETAIL_INVITE_CODE_INVALID,
 )
+from core.permissions import permissions_for_role
 from core.security import create_access_token
 from infra.config import Settings
 from infra.db import Database
+from infra.invite_codes import UNUSED_CONDITION
 from infra.passwords import hash_password, verify_password
 
 router = APIRouter()
 
 
 def _token_response(user: dict, settings: Settings) -> dict:
-    token, expires_at = create_access_token(user["id"], user["role"], settings)
+    token, expires_at = create_access_token(user["id"], settings)
     return TokenOut(
         access_token=token,
         expires_at=expires_at,
@@ -37,9 +39,7 @@ def _token_response(user: dict, settings: Settings) -> dict:
 async def _claim_invite(db: Database, code: str) -> dict:
     """Return a still-usable invite code or raise 400."""
     invite = await db.fetch_one(
-        "SELECT code, role FROM invite_codes "
-        "WHERE code = ? AND used_at IS NULL "
-        "AND (expires_at IS NULL OR expires_at > datetime('now'))",
+        f"SELECT code, role FROM invite_codes WHERE code = ? AND {UNUSED_CONDITION}",
         (code,),
     )
     if invite is None:
@@ -121,4 +121,6 @@ async def login(
 
 @router.get("/me")
 async def me(user: dict = Depends(get_current_user)) -> JSONResponse:
-    return success(UserOut(**user).model_dump())
+    return success(
+        MeOut(**user, permissions=permissions_for_role(user["role"])).model_dump()
+    )

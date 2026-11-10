@@ -31,7 +31,7 @@ DETAIL_INTERNAL_ERROR = "internal server error"
 DETAIL_NOT_FOUND = "resource not found"
 DETAIL_METHOD_NOT_ALLOWED = "method not allowed"
 DETAIL_UNAUTHORIZED = "invalid or missing access token"
-DETAIL_FORBIDDEN = "admin role is required"
+DETAIL_FORBIDDEN = "permission denied"
 
 # Validation templates: the suffix is the message reported by Pydantic.
 DETAIL_INVALID_EMAIL = "email is invalid: {reason}"

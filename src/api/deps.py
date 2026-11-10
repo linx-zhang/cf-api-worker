@@ -1,4 +1,5 @@
-"""FastAPI dependencies: settings, database access and the authenticated user."""
+"""FastAPI dependencies: settings, database access, authentication and
+permission-code authorization."""
 
 from __future__ import annotations
 
@@ -11,6 +12,7 @@ from core.constants import (
     DETAIL_FORBIDDEN,
     DETAIL_UNAUTHORIZED,
 )
+from core.permissions import has_permission
 from core.security import decode_access_token
 from infra.config import Settings
 from infra.db import Database
@@ -52,6 +54,7 @@ async def get_current_user(
     token = _bearer_token(request)
     try:
         payload = decode_access_token(token, settings)
+        # The role is always read from the database, never from the token.
         user_id = int(payload["sub"])
     except (PyJWTError, KeyError, TypeError, ValueError):
         raise _UNAUTHORIZED from None
@@ -64,14 +67,30 @@ async def get_current_user(
     return user
 
 
-async def require_admin(user: dict = Depends(get_current_user)) -> dict:
-    if user["role"] != "admin":
-        raise ApiError(
-            CODE_FORBIDDEN,
-            DETAIL_FORBIDDEN,
-            status.HTTP_403_FORBIDDEN,
-        )
-    return user
+def _forbidden() -> ApiError:
+    return ApiError(CODE_FORBIDDEN, DETAIL_FORBIDDEN, status.HTTP_403_FORBIDDEN)
+
+
+def require_permission(code: str):
+    """Dependency factory: the current user must hold ``code``."""
+
+    async def dependency(user: dict = Depends(get_current_user)) -> dict:
+        if not has_permission(user["role"], code):
+            raise _forbidden()
+        return user
+
+    return dependency
+
+
+def ensure_resource_permission(
+    user: dict, owner_id: int, own_code: str, any_code: str
+) -> None:
+    """Authorize an ownership-scoped action, raising 403 when not allowed."""
+    if owner_id == user["id"] and has_permission(user["role"], own_code):
+        return
+    if has_permission(user["role"], any_code):
+        return
+    raise _forbidden()
 
 
 def pagination(

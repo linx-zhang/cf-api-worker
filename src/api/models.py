@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from core.utils import normalize_email
 
@@ -35,6 +35,10 @@ class UserOut(BaseModel):
     created_at: str
 
 
+class MeOut(UserOut):
+    permissions: list[str] = Field(default_factory=list)
+
+
 class TokenOut(BaseModel):
     access_token: str
     token_type: str = "bearer"
@@ -47,10 +51,21 @@ class PostIn(BaseModel):
     body_md: str = Field(min_length=1)
 
 
+class PostUpdateIn(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    body_md: str | None = Field(default=None, min_length=1)
+
+    @model_validator(mode="after")
+    def _at_least_one_field(self) -> PostUpdateIn:
+        if self.title is None and self.body_md is None:
+            raise ValueError("at least one of title or body_md is required")
+        return self
+
+
 class PostOut(BaseModel):
     id: int
     author_id: int
-    author_email: str | None = None
+    author_name: str
     title: str
     body_md: str
     created_at: str
@@ -66,7 +81,7 @@ class CommentOut(BaseModel):
     id: int
     post_id: int
     author_id: int
-    author_email: str | None = None
+    author_name: str
     parent_id: int | None = None
     body: str
     created_at: str

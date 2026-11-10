@@ -68,10 +68,11 @@ def verify_password(password: str, stored: str) -> bool:
     return hmac.compare_digest(digest, expected)
 
 
-def create_access_token(user_id: int, role: str, settings) -> tuple[str, int]:
+def create_access_token(user_id: int, settings) -> tuple[str, int]:
+    """Issue a token carrying only the user id; roles are read from D1."""
     issued_at = utc_now_seconds()
     expires_at = issued_at + settings.jwt_exp_minutes * 60
-    payload = {"sub": str(user_id), "role": role, "iat": issued_at, "exp": expires_at}
+    payload = {"sub": str(user_id), "iat": issued_at, "exp": expires_at}
     token = jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
     return token, expires_at
 

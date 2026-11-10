@@ -20,6 +20,11 @@ def normalize_email(value: str) -> str:
     return value
 
 
+def display_name(email: str) -> str:
+    """Public author name: the local part of the email, never the full address."""
+    return email.split("@", 1)[0]
+
+
 def utc_now() -> datetime:
     return datetime.now(UTC)
 

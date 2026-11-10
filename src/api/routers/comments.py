@@ -5,7 +5,12 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, status
 from fastapi.responses import JSONResponse
 
-from api.deps import get_current_user, get_db, require_admin
+from api.deps import (
+    ensure_resource_permission,
+    get_current_user,
+    get_db,
+    require_permission,
+)
 from api.models import CommentIn, CommentOut
 from api.responses import ApiError, success
 from core.constants import (
@@ -18,6 +23,12 @@ from core.constants import (
     DETAIL_INVALID_PARENT_COMMENT,
     DETAIL_POST_NOT_FOUND,
 )
+from core.permissions import (
+    COMMENT_CREATE_ANY,
+    COMMENT_DELETE_ANY,
+    COMMENT_DELETE_OWN,
+)
+from core.utils import display_name
 from infra.db import Database
 
 router = APIRouter()
@@ -28,6 +39,13 @@ _COMMENT_SELECT = (
     "c.body, c.created_at FROM comments c JOIN users u ON u.id = c.author_id "
     "WHERE c.deleted_at IS NULL"
 )
+
+
+def _comment_out(row: dict) -> dict:
+    """Map a joined row to the public shape (no email, only a display name)."""
+    data = dict(row)
+    data["author_name"] = display_name(data.pop("author_email", "") or "")
+    return CommentOut(**data).model_dump()
 
 
 async def _ensure_post_exists(db: Database, post_id: int) -> None:
@@ -45,14 +63,14 @@ async def list_comments(post_id: int, db: Database = Depends(get_db)) -> JSONRes
         _COMMENT_SELECT + " AND c.post_id = ? ORDER BY c.created_at ASC, c.id ASC",
         (post_id,),
     )
-    return success([CommentOut(**comment).model_dump() for comment in comments])
+    return success([_comment_out(comment) for comment in comments])
 
 
 @router.post("/{post_id}/comments", status_code=status.HTTP_201_CREATED)
 async def create_comment(
     post_id: int,
     payload: CommentIn,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_permission(COMMENT_CREATE_ANY)),
     db: Database = Depends(get_db),
 ) -> JSONResponse:
     await _ensure_post_exists(db, post_id)
@@ -80,7 +98,7 @@ async def create_comment(
             DETAIL_COMMENT_CREATE_FAILED,
             status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
-    comment["author_email"] = user["email"]
+    comment["author_name"] = display_name(user["email"])
     return success(
         CommentOut(**comment).model_dump(), status_code=status.HTTP_201_CREATED
     )
@@ -89,10 +107,22 @@ async def create_comment(
 @delete_router.delete("/{comment_id}")
 async def delete_comment(
     comment_id: int,
-    admin: dict = Depends(require_admin),
+    user: dict = Depends(get_current_user),
     db: Database = Depends(get_db),
 ) -> JSONResponse:
-    """Hard delete a comment and every reply below it (admin only)."""
+    """Soft delete a comment and every reply below it."""
+    comment = await db.fetch_one(
+        "SELECT id, author_id FROM comments WHERE id = ? AND deleted_at IS NULL",
+        (comment_id,),
+    )
+    if comment is None:
+        raise ApiError(
+            CODE_NOT_FOUND, DETAIL_COMMENT_NOT_FOUND, status.HTTP_404_NOT_FOUND
+        )
+    ensure_resource_permission(
+        user, comment["author_id"], COMMENT_DELETE_OWN, COMMENT_DELETE_ANY
+    )
+
     rows = await db.fetch_all(
         "WITH RECURSIVE subtree(id) AS ("
         "SELECT id FROM comments WHERE id = ? "
@@ -102,14 +132,12 @@ async def delete_comment(
         (comment_id,),
     )
     ids = [row["id"] for row in rows]
-    if not ids:
-        raise ApiError(
-            CODE_NOT_FOUND, DETAIL_COMMENT_NOT_FOUND, status.HTTP_404_NOT_FOUND
-        )
 
     placeholders = ",".join("?" * len(ids))
     deleted = await db.execute(
-        f"DELETE FROM comments WHERE id IN ({placeholders})", ids
+        "UPDATE comments SET deleted_at = datetime('now') "
+        f"WHERE id IN ({placeholders}) AND deleted_at IS NULL",
+        ids,
     )
     return success(
         {"id": comment_id, "deleted_comments": deleted},

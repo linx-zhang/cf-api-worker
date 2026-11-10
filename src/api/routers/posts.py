@@ -5,8 +5,14 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, status
 from fastapi.responses import JSONResponse
 
-from api.deps import get_current_user, get_db, pagination, require_admin
-from api.models import PostIn, PostOut
+from api.deps import (
+    ensure_resource_permission,
+    get_current_user,
+    get_db,
+    pagination,
+    require_permission,
+)
+from api.models import PostIn, PostOut, PostUpdateIn
 from api.responses import ApiError, success
 from core.constants import (
     CODE_INTERNAL_ERROR,
@@ -15,6 +21,14 @@ from core.constants import (
     DETAIL_POST_DELETED,
     DETAIL_POST_NOT_FOUND,
 )
+from core.permissions import (
+    POST_CREATE_ANY,
+    POST_DELETE_ANY,
+    POST_DELETE_OWN,
+    POST_UPDATE_ANY,
+    POST_UPDATE_OWN,
+)
+from core.utils import display_name
 from infra.db import Database
 
 router = APIRouter()
@@ -24,6 +38,13 @@ _POST_SELECT = (
     "p.created_at, p.updated_at FROM posts p JOIN users u ON u.id = p.author_id "
     "WHERE p.deleted_at IS NULL"
 )
+
+
+def _post_out(row: dict) -> dict:
+    """Map a joined row to the public shape (no email, only a display name)."""
+    data = dict(row)
+    data["author_name"] = display_name(data.pop("author_email", "") or "")
+    return PostOut(**data).model_dump()
 
 
 async def _get_post(db: Database, post_id: int) -> dict:
@@ -43,18 +64,18 @@ async def list_posts(
         _POST_SELECT + " ORDER BY p.created_at DESC, p.id DESC LIMIT ? OFFSET ?",
         (limit, offset),
     )
-    return success([PostOut(**post).model_dump() for post in posts])
+    return success([_post_out(post) for post in posts])
 
 
 @router.get("/{post_id}")
 async def get_post(post_id: int, db: Database = Depends(get_db)) -> JSONResponse:
-    return success(PostOut(**await _get_post(db, post_id)).model_dump())
+    return success(_post_out(await _get_post(db, post_id)))
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_post(
     payload: PostIn,
-    user: dict = Depends(get_current_user),
+    user: dict = Depends(require_permission(POST_CREATE_ANY)),
     db: Database = Depends(get_db),
 ) -> JSONResponse:
     post = await db.insert_returning(
@@ -68,27 +89,63 @@ async def create_post(
             DETAIL_POST_CREATE_FAILED,
             status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
-    post["author_email"] = user["email"]
+    post["author_name"] = display_name(user["email"])
     return success(PostOut(**post).model_dump(), status_code=status.HTTP_201_CREATED)
+
+
+@router.patch("/{post_id}")
+async def update_post(
+    post_id: int,
+    payload: PostUpdateIn,
+    user: dict = Depends(get_current_user),
+    db: Database = Depends(get_db),
+) -> JSONResponse:
+    """Update a post: the author needs ``post:update:own``, admins ``any``."""
+    post = await _get_post(db, post_id)
+    ensure_resource_permission(
+        user, post["author_id"], POST_UPDATE_OWN, POST_UPDATE_ANY
+    )
+
+    assignments: list[str] = []
+    params: list[object] = []
+    if payload.title is not None:
+        assignments.append("title = ?")
+        params.append(payload.title.strip())
+    if payload.body_md is not None:
+        assignments.append("body_md = ?")
+        params.append(payload.body_md)
+    params.append(post_id)
+
+    await db.execute(
+        f"UPDATE posts SET {', '.join(assignments)}, "
+        "updated_at = datetime('now') WHERE id = ? AND deleted_at IS NULL",
+        params,
+    )
+    return success(_post_out(await _get_post(db, post_id)))
 
 
 @router.delete("/{post_id}")
 async def delete_post(
     post_id: int,
-    admin: dict = Depends(require_admin),
+    user: dict = Depends(get_current_user),
     db: Database = Depends(get_db),
 ) -> JSONResponse:
-    """Hard delete a post together with all of its comments (admin only)."""
-    post = await db.fetch_one("SELECT id FROM posts WHERE id = ?", (post_id,))
-    if post is None:
-        raise ApiError(CODE_NOT_FOUND, DETAIL_POST_NOT_FOUND, status.HTTP_404_NOT_FOUND)
+    """Soft delete a post and all of its comments."""
+    post = await _get_post(db, post_id)
+    ensure_resource_permission(
+        user, post["author_id"], POST_DELETE_OWN, POST_DELETE_ANY
+    )
 
     deleted_comments = await db.execute(
-        "DELETE FROM comments WHERE post_id = ?", (post_id,)
+        "UPDATE comments SET deleted_at = datetime('now') "
+        "WHERE post_id = ? AND deleted_at IS NULL",
+        (post_id,),
     )
-    deleted_posts = await db.execute("DELETE FROM posts WHERE id = ?", (post_id,))
-    if deleted_posts == 0:
-        raise ApiError(CODE_NOT_FOUND, DETAIL_POST_NOT_FOUND, status.HTTP_404_NOT_FOUND)
+    await db.execute(
+        "UPDATE posts SET deleted_at = datetime('now') "
+        "WHERE id = ? AND deleted_at IS NULL",
+        (post_id,),
+    )
 
     return success(
         {"id": post_id, "deleted_comments": deleted_comments},
