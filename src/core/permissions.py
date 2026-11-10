@@ -32,6 +32,7 @@ INVITE_CODE_DELETE_ANY = "invite_code:delete:any"
 
 USER_READ_ANY = "user:read:any"
 USER_UPDATE_ANY = "user:update:any"
+USER_DELETE_ANY = "user:delete:any"
 
 # Shared by every signed-in role.
 _MEMBER_PERMISSIONS = (
@@ -52,6 +53,7 @@ _ADMIN_PERMISSIONS = (
     INVITE_CODE_DELETE_ANY,
     USER_READ_ANY,
     USER_UPDATE_ANY,
+    USER_DELETE_ANY,
 )
 
 ROLE_PERMISSIONS: dict[str, tuple[str, ...]] = {

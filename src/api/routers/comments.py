@@ -17,6 +17,7 @@ from core.constants import (
     CODE_INTERNAL_ERROR,
     CODE_INVALID_PARENT_COMMENT,
     CODE_NOT_FOUND,
+    DELETED_AUTHOR_NAME,
     DETAIL_COMMENT_CREATE_FAILED,
     DETAIL_COMMENT_DELETED,
     DETAIL_COMMENT_NOT_FOUND,
@@ -35,7 +36,8 @@ router = APIRouter()
 delete_router = APIRouter()
 
 _COMMENT_SELECT = (
-    "SELECT c.id, c.post_id, c.author_id, u.email AS author_email, c.parent_id, "
+    "SELECT c.id, c.post_id, c.author_id, u.email AS author_email, "
+    "u.deleted_at AS author_deleted_at, c.parent_id, "
     "c.body, c.created_at FROM comments c JOIN users u ON u.id = c.author_id "
     "WHERE c.deleted_at IS NULL"
 )
@@ -44,7 +46,9 @@ _COMMENT_SELECT = (
 def _comment_out(row: dict) -> dict:
     """Map a joined row to the public shape (no email, only a display name)."""
     data = dict(row)
-    data["author_name"] = display_name(data.pop("author_email", "") or "")
+    email = data.pop("author_email", "") or ""
+    deleted = data.pop("author_deleted_at", None)
+    data["author_name"] = DELETED_AUTHOR_NAME if deleted else display_name(email)
     return CommentOut(**data).model_dump()
 
 

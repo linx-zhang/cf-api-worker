@@ -103,7 +103,8 @@ async def login(
     settings: Settings = Depends(get_settings),
 ) -> JSONResponse:
     user = await db.fetch_one(
-        "SELECT id, email, role, created_at, password_hash FROM users WHERE email = ?",
+        "SELECT id, email, role, created_at, password_hash FROM users "
+        "WHERE email = ? AND deleted_at IS NULL",
         (payload.email,),
     )
     if user is None or not await verify_password(

@@ -89,8 +89,26 @@ class CommentOut(BaseModel):
     created_at: str
 
 
-class UserRoleUpdateIn(BaseModel):
-    role: Literal["user", "internal", "admin"]
+class AdminUserOut(UserOut):
+    last_active_at: str | None = None
+
+
+class UserUpdateIn(BaseModel):
+    email: str | None = None
+    role: Literal["user", "internal", "admin"] | None = None
+
+    @field_validator("email")
+    @classmethod
+    def _email(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return normalize_email(value)
+
+    @model_validator(mode="after")
+    def _at_least_one_field(self) -> UserUpdateIn:
+        if self.email is None and self.role is None:
+            raise ValueError("at least one of email or role is required")
+        return self
 
 
 class InviteCodeCreateIn(BaseModel):

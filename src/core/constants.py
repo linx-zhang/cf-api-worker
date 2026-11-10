@@ -28,6 +28,7 @@ CODE_INVALID_INVITE_ROLE = "invalid_invite_role"
 CODE_CANNOT_CHANGE_OWN_ROLE = "cannot_change_own_role"
 CODE_LAST_ADMIN_REQUIRED = "last_admin_required"
 CODE_INVALID_ROLE = "invalid_role"
+CODE_CANNOT_DELETE_SELF = "cannot_delete_self"
 CODE_INTERNAL_ERROR = "internal_error"
 
 # --- Details ---------------------------------------------------------------
@@ -73,3 +74,8 @@ DETAIL_USER_NOT_FOUND = "user not found"
 DETAIL_CANNOT_CHANGE_OWN_ROLE = "administrators cannot change their own role"
 DETAIL_LAST_ADMIN_REQUIRED = "at least one admin account is required"
 DETAIL_INVALID_ROLE = "role must be one of: user, internal, admin: {reason}"
+DETAIL_CANNOT_DELETE_SELF = "administrators cannot delete their own account"
+DETAIL_USER_DELETED = "user deleted"
+
+# Author display for soft-deleted accounts.
+DELETED_AUTHOR_NAME = "已注销"

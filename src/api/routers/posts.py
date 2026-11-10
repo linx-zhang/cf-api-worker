@@ -17,6 +17,7 @@ from api.responses import ApiError, success
 from core.constants import (
     CODE_INTERNAL_ERROR,
     CODE_NOT_FOUND,
+    DELETED_AUTHOR_NAME,
     DETAIL_POST_CREATE_FAILED,
     DETAIL_POST_DELETED,
     DETAIL_POST_NOT_FOUND,
@@ -34,7 +35,8 @@ from infra.db import Database
 router = APIRouter()
 
 _POST_SELECT = (
-    "SELECT p.id, p.author_id, u.email AS author_email, p.title, p.body_md, "
+    "SELECT p.id, p.author_id, u.email AS author_email, "
+    "u.deleted_at AS author_deleted_at, p.title, p.body_md, "
     "p.created_at, p.updated_at FROM posts p JOIN users u ON u.id = p.author_id "
     "WHERE p.deleted_at IS NULL"
 )
@@ -43,7 +45,9 @@ _POST_SELECT = (
 def _post_out(row: dict) -> dict:
     """Map a joined row to the public shape (no email, only a display name)."""
     data = dict(row)
-    data["author_name"] = display_name(data.pop("author_email", "") or "")
+    email = data.pop("author_email", "") or ""
+    deleted = data.pop("author_deleted_at", None)
+    data["author_name"] = DELETED_AUTHOR_NAME if deleted else display_name(email)
     return PostOut(**data).model_dump()
 
 

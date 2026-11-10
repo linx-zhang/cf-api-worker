@@ -60,7 +60,9 @@ async def get_current_user(
         raise _UNAUTHORIZED from None
 
     user = await db.fetch_one(
-        "SELECT id, email, role, created_at FROM users WHERE id = ?", (user_id,)
+        "SELECT id, email, role, created_at FROM users "
+        "WHERE id = ? AND deleted_at IS NULL",
+        (user_id,),
     )
     if user is None:
         raise _UNAUTHORIZED
