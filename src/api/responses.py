@@ -17,6 +17,7 @@ from core.constants import (
     CODE_INVALID_INVITE_CODE,
     CODE_INVALID_INVITE_ROLE,
     CODE_INVALID_PASSWORD,
+    CODE_INVALID_ROLE,
     CODE_METHOD_NOT_ALLOWED,
     CODE_NOT_FOUND,
     CODE_OK,
@@ -24,6 +25,7 @@ from core.constants import (
     DETAIL_INTERNAL_ERROR,
     DETAIL_INVALID_EMAIL,
     DETAIL_INVALID_PASSWORD,
+    DETAIL_INVALID_ROLE,
     DETAIL_INVALID_VALUE,
     DETAIL_INVITE_CODE_MALFORMED,
     DETAIL_INVITE_ROLE,
@@ -79,13 +81,17 @@ _FIELD_ERRORS = {
 }
 
 
-def _validation_summary(errors: list[dict]) -> tuple[str, str]:
+def _validation_summary(errors: list[dict], path: str = "") -> tuple[str, str]:
     first = errors[0] if errors else {}
     loc = [str(part) for part in first.get("loc", ())]
     field = loc[-1] if loc else ""
-    code, template = _FIELD_ERRORS.get(
-        field, (CODE_VALIDATION_ERROR, DETAIL_VALIDATION_ERROR)
-    )
+    if field == "role" and path.startswith("/admin/users/"):
+        # Admin user management allows all three roles, unlike invite creation.
+        code, template = CODE_INVALID_ROLE, DETAIL_INVALID_ROLE
+    else:
+        code, template = _FIELD_ERRORS.get(
+            field, (CODE_VALIDATION_ERROR, DETAIL_VALIDATION_ERROR)
+        )
     message = str(first.get("msg", DETAIL_INVALID_VALUE))
     return code, template.format(reason=message)
 
@@ -99,7 +105,7 @@ def install_error_handlers(app: FastAPI) -> None:
     async def _validation_error(
         request: Request, exc: RequestValidationError
     ) -> JSONResponse:
-        code, detail = _validation_summary(exc.errors())
+        code, detail = _validation_summary(exc.errors(), request.url.path)
         return _envelope(code, detail, None, 422)
 
     @app.exception_handler(StarletteHTTPException)

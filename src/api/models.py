@@ -89,6 +89,10 @@ class CommentOut(BaseModel):
     created_at: str
 
 
+class UserRoleUpdateIn(BaseModel):
+    role: Literal["user", "internal", "admin"]
+
+
 class InviteCodeCreateIn(BaseModel):
     role: Literal["internal", "admin"]
     count: int = Field(default=1, ge=1, le=50)

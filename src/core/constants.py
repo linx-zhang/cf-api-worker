@@ -25,6 +25,9 @@ CODE_HTTP_ERROR = "http_error"
 CODE_INVALID_PARENT_COMMENT = "invalid_parent_comment"
 CODE_INVITE_CODE_IN_USE = "invite_code_in_use"
 CODE_INVALID_INVITE_ROLE = "invalid_invite_role"
+CODE_CANNOT_CHANGE_OWN_ROLE = "cannot_change_own_role"
+CODE_LAST_ADMIN_REQUIRED = "last_admin_required"
+CODE_INVALID_ROLE = "invalid_role"
 CODE_INTERNAL_ERROR = "internal_error"
 
 # --- Details ---------------------------------------------------------------
@@ -64,3 +67,9 @@ DETAIL_INVITE_CODES_CREATED = "invite codes created"
 DETAIL_INVITE_CODE_NOT_FOUND = "invite code not found"
 DETAIL_INVITE_CODE_IN_USE = "invite code has already been used and cannot be deleted"
 DETAIL_INVITE_CODE_DELETED = "invite code deleted"
+
+# Admin user management.
+DETAIL_USER_NOT_FOUND = "user not found"
+DETAIL_CANNOT_CHANGE_OWN_ROLE = "administrators cannot change their own role"
+DETAIL_LAST_ADMIN_REQUIRED = "at least one admin account is required"
+DETAIL_INVALID_ROLE = "role must be one of: user, internal, admin: {reason}"

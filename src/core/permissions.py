@@ -30,6 +30,9 @@ INVITE_CODE_CREATE_ANY = "invite_code:create:any"
 INVITE_CODE_READ_ANY = "invite_code:read:any"
 INVITE_CODE_DELETE_ANY = "invite_code:delete:any"
 
+USER_READ_ANY = "user:read:any"
+USER_UPDATE_ANY = "user:update:any"
+
 # Shared by every signed-in role.
 _MEMBER_PERMISSIONS = (
     ACCOUNT_READ_SELF,
@@ -47,6 +50,8 @@ _ADMIN_PERMISSIONS = (
     INVITE_CODE_CREATE_ANY,
     INVITE_CODE_READ_ANY,
     INVITE_CODE_DELETE_ANY,
+    USER_READ_ANY,
+    USER_UPDATE_ANY,
 )
 
 ROLE_PERMISSIONS: dict[str, tuple[str, ...]] = {
