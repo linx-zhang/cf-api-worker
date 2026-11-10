@@ -23,6 +23,8 @@ CODE_NOT_FOUND = "not_found"
 CODE_METHOD_NOT_ALLOWED = "method_not_allowed"
 CODE_HTTP_ERROR = "http_error"
 CODE_INVALID_PARENT_COMMENT = "invalid_parent_comment"
+CODE_INVITE_CODE_IN_USE = "invite_code_in_use"
+CODE_INVALID_INVITE_ROLE = "invalid_invite_role"
 CODE_INTERNAL_ERROR = "internal_error"
 
 # --- Details ---------------------------------------------------------------
@@ -55,3 +57,10 @@ DETAIL_COMMENT_CREATE_FAILED = "comment was not created"
 DETAIL_POST_DELETED = "post deleted"
 DETAIL_COMMENT_DELETED = "comment deleted"
 DETAIL_INVALID_PARENT_COMMENT = "parent comment does not belong to this post"
+
+# Admin invite-code management.
+DETAIL_INVITE_ROLE = "invite role must be internal or admin: {reason}"
+DETAIL_INVITE_CODES_CREATED = "invite codes created"
+DETAIL_INVITE_CODE_NOT_FOUND = "invite code not found"
+DETAIL_INVITE_CODE_IN_USE = "invite code has already been used and cannot be deleted"
+DETAIL_INVITE_CODE_DELETED = "invite code deleted"

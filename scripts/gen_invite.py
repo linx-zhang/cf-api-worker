@@ -17,26 +17,15 @@ import argparse
 import shutil
 import subprocess
 import sys
-import uuid
-from datetime import timedelta
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from core.utils import sqlite_timestamp, utc_now
+from infra.invite_codes import build_insert_sql, generate_invite_codes
 
 ROLES = ("user", "internal", "admin")
 DEFAULT_DB = "api-worker-db"
-
-
-def build_sql(codes: list[str], role: str, expires_at: str | None) -> str:
-    expiry = "NULL" if expires_at is None else f"'{expires_at}'"
-    return "; ".join(
-        "INSERT INTO invite_codes (code, role, expires_at) "
-        f"VALUES ('{code}', '{role}', {expiry})"
-        for code in codes
-    )
 
 
 def main() -> int:
@@ -59,10 +48,8 @@ def main() -> int:
     if args.count < 1:
         parser.error("--count must be >= 1")
 
-    codes = [str(uuid.uuid4()) for _ in range(args.count)]
-    expires_at = None
-    if args.days > 0:
-        expires_at = sqlite_timestamp(utc_now() + timedelta(days=args.days))
+    codes = generate_invite_codes(args.role, args.count, args.days or None)
+    expires_at = codes[0]["expires_at"]
 
     # On Windows npx is npx.cmd; resolve it so subprocess can launch it directly.
     npx = shutil.which("npx") or shutil.which("npx.cmd") or "npx"
@@ -73,7 +60,7 @@ def main() -> int:
         "execute",
         args.db,
         "--command",
-        build_sql(codes, args.role, expires_at),
+        build_insert_sql(codes),
     ]
     command.insert(4, "--remote" if args.remote else "--local")
 
@@ -88,8 +75,8 @@ def main() -> int:
     print(f"role={args.role}")
     print(f"expires_at={expires_at or 'never'}")
     print(f"count={len(codes)}")
-    for code in codes:
-        print(f"code={code}")
+    for item in codes:
+        print(f"code={item['code']}")
     print("stored in", "remote" if args.remote else "local", "D1")
     return 0
 

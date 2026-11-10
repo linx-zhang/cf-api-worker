@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from core.utils import normalize_email
@@ -85,3 +87,19 @@ class CommentOut(BaseModel):
     parent_id: int | None = None
     body: str
     created_at: str
+
+
+class InviteCodeCreateIn(BaseModel):
+    role: Literal["internal", "admin"]
+    count: int = Field(default=1, ge=1, le=50)
+    expires_in_days: int = Field(default=7, ge=1, le=365)
+
+
+class InviteCodeOut(BaseModel):
+    code: str
+    role: str
+    expires_at: str | None = None
+    created_at: str
+    used_at: str | None = None
+    created_by: int | None = None
+    created_by_email: str | None = None

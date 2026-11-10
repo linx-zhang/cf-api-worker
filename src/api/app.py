@@ -7,7 +7,7 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import Response
 
 from api.responses import install_error_handlers, success
-from api.routers import auth, comments, posts
+from api.routers import admin, auth, comments, posts
 
 
 class Preflight204CORSMiddleware(CORSMiddleware):
@@ -34,6 +34,7 @@ app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(posts.router, prefix="/posts", tags=["posts"])
 app.include_router(comments.router, prefix="/posts", tags=["comments"])
 app.include_router(comments.delete_router, prefix="/comments", tags=["comments"])
+app.include_router(admin.router, prefix="/admin", tags=["admin"])
 
 install_error_handlers(app)
 
