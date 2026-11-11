@@ -15,6 +15,8 @@ from api.models import (
     AdminUserOut,
     InviteCodeCreateIn,
     InviteCodeOut,
+    UserPasswordResetIn,
+    UserPasswordResetOut,
     UserUpdateIn,
 )
 from api.responses import ApiError, success
@@ -35,6 +37,7 @@ from core.constants import (
     DETAIL_INVITE_CODE_NOT_FOUND,
     DETAIL_INVITE_CODES_CREATED,
     DETAIL_LAST_ADMIN_REQUIRED,
+    DETAIL_PASSWORD_RESET,
     DETAIL_TIMESTAMP_RANGE,
     DETAIL_USER_DELETED,
     DETAIL_USER_NOT_FOUND,
@@ -46,6 +49,7 @@ from core.permissions import (
     INVITE_CODE_READ_ANY,
     USER_DELETE_ANY,
     USER_READ_ANY,
+    USER_RESET_PASSWORD_ANY,
     USER_UPDATE_ANY,
 )
 from core.utils import sqlite_timestamp
@@ -56,6 +60,7 @@ from infra.invite_codes import (
     insert_codes,
     list_codes,
 )
+from infra.passwords import generate_temporary_password, hash_password
 
 router = APIRouter()
 
@@ -282,6 +287,47 @@ async def update_user(
     if updated is None:
         raise ApiError(CODE_NOT_FOUND, DETAIL_USER_NOT_FOUND, status.HTTP_404_NOT_FOUND)
     return success(_admin_user_out(updated))
+
+
+@router.post("/users/{user_id}/reset-password")
+async def reset_user_password(
+    user_id: int,
+    payload: UserPasswordResetIn,
+    admin: dict = Depends(require_permission(USER_RESET_PASSWORD_ANY)),
+    db: Database = Depends(get_db),
+) -> JSONResponse:
+    """Replace a user's password, either with one supplied by the admin or with
+    a generated temporary one.
+
+    The chosen password is returned exactly once and never stored in clear text.
+    ``password_changed_at`` makes tokens issued before this call stop working,
+    so an admin reset also ends existing sessions.
+    """
+    target = await _fetch_admin_user(db, user_id)
+    if target is None:
+        raise ApiError(CODE_NOT_FOUND, DETAIL_USER_NOT_FOUND, status.HTTP_404_NOT_FOUND)
+
+    generated = payload.password is None
+    password = generate_temporary_password() if generated else payload.password
+    password_hash = await hash_password(password)
+    reset_at = sqlite_timestamp()
+    changed = await db.execute(
+        "UPDATE users SET password_hash = ?, password_changed_at = ? "
+        "WHERE id = ? AND deleted_at IS NULL",
+        (password_hash, reset_at, user_id),
+    )
+    if changed == 0:
+        raise ApiError(CODE_NOT_FOUND, DETAIL_USER_NOT_FOUND, status.HTTP_404_NOT_FOUND)
+    return success(
+        UserPasswordResetOut(
+            id=user_id,
+            email=target["email"],
+            password=password,
+            generated=generated,
+            password_reset_at=reset_at,
+        ).model_dump(),
+        detail=DETAIL_PASSWORD_RESET,
+    )
 
 
 @router.delete("/users/{user_id}")

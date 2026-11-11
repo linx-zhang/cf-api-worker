@@ -34,6 +34,7 @@ INVITE_CODE_DELETE_ANY = "invite_code:delete:any"
 USER_READ_ANY = "user:read:any"
 USER_UPDATE_ANY = "user:update:any"
 USER_DELETE_ANY = "user:delete:any"
+USER_RESET_PASSWORD_ANY = "user:reset_password:any"
 
 ACTIVITY_WRITE_SELF = "activity:write:self"
 ACTIVITY_READ_ANY = "activity:read:any"
@@ -60,6 +61,7 @@ _ADMIN_PERMISSIONS = (
     USER_READ_ANY,
     USER_UPDATE_ANY,
     USER_DELETE_ANY,
+    USER_RESET_PASSWORD_ANY,
     ACTIVITY_READ_ANY,
 )
 

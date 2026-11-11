@@ -65,3 +65,13 @@ async def verify_password(password: str, stored: str) -> bool:
     iterations, salt, expected = parsed
     _, digest = await _derive(password.encode("utf-8"), salt, iterations)
     return hmac.compare_digest(digest, expected)
+
+
+# No 0/O or 1/l/I: the password is read off a screen and typed by a human.
+_TEMP_PASSWORD_ALPHABET = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+TEMP_PASSWORD_LENGTH = 16
+
+
+def generate_temporary_password(length: int = TEMP_PASSWORD_LENGTH) -> str:
+    """Random password for an admin-initiated reset (~93 bits at 16 chars)."""
+    return "".join(secrets.choice(_TEMP_PASSWORD_ALPHABET) for _ in range(length))

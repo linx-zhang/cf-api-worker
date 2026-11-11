@@ -14,6 +14,7 @@ from core.constants import (
 )
 from core.permissions import has_permission
 from core.security import decode_access_token
+from core.utils import parse_sqlite_timestamp
 from infra.config import Settings
 from infra.db import Database
 
@@ -44,6 +45,14 @@ def _bearer_token(request: Request) -> str:
     return token.strip()
 
 
+def _issued_before_reset(issued_at: object, reset_at: str) -> bool:
+    """True when a token was issued before the last admin password reset."""
+    if not isinstance(issued_at, int | float):
+        return False
+    reset_epoch = parse_sqlite_timestamp(reset_at)
+    return reset_epoch is not None and issued_at < reset_epoch
+
+
 async def get_current_user(
     request: Request,
     db: Database = Depends(get_db),
@@ -61,10 +70,15 @@ async def get_current_user(
 
     user = await db.fetch_one(
         "SELECT id, email, role, created_at, nickname, first_name, last_name, "
-        "avatar_url FROM users WHERE id = ? AND deleted_at IS NULL",
+        "avatar_url, password_changed_at FROM users "
+        "WHERE id = ? AND deleted_at IS NULL",
         (user_id,),
     )
     if user is None:
+        raise _UNAUTHORIZED
+    # A reset stamps password_changed_at; tokens issued before it are dead.
+    changed_at = user.pop("password_changed_at", None)
+    if changed_at and _issued_before_reset(payload.get("iat"), changed_at):
         raise _UNAUTHORIZED
     return user
 

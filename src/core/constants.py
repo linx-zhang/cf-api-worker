@@ -80,6 +80,9 @@ DETAIL_LAST_ADMIN_REQUIRED = "at least one admin account is required"
 DETAIL_INVALID_ROLE = "role must be one of: user, internal, admin: {reason}"
 DETAIL_CANNOT_DELETE_SELF = "administrators cannot delete their own account"
 DETAIL_USER_DELETED = "user deleted"
+DETAIL_PASSWORD_RESET = (
+    "password was reset; the new password must be handed over out of band"
+)
 
 # Author display for soft-deleted accounts.
 DELETED_AUTHOR_NAME = "已注销"

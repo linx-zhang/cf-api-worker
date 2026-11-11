@@ -120,6 +120,22 @@ class AdminUserOut(UserOut):
     last_active_at: str | None = None
 
 
+class UserPasswordResetIn(BaseModel):
+    """Optional custom password; omitting it makes the server generate one."""
+
+    password: str | None = Field(default=None, min_length=8, max_length=128)
+
+
+class UserPasswordResetOut(BaseModel):
+    """One-time response: the value to hand over, never stored in clear text."""
+
+    id: int
+    email: str
+    password: str
+    generated: bool
+    password_reset_at: str
+
+
 PROFILE_FIELDS = ("nickname", "first_name", "last_name", "avatar_url")
 
 _PROFILE_LIMITS = {

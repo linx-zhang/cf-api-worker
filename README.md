@@ -3,9 +3,9 @@ Project: api-worker - a small blog/reporting backend running on Cloudflare Worke
 Stack: Cloudflare Workers (python_workers compat flag, Pyodide runtime) + FastAPI (pure-ASGI glue) + D1 (SQLite) + PyJWT + wrangler 4. No ORM: every query is hand-written SQL through src/infra/db.py.
 Layout: src/entry.py (Worker entry, Default entrypoint exported for wrangler) -> src/api/ (app.py router wiring, deps.py auth/permissions, models.py Pydantic schemas, responses.py envelope + error handlers, routers/) -> src/core/ (permissions.py role->codes map, constants.py response codes/details, security.py JWT + PBKDF2, utils.py helpers) -> src/infra/ (db.py D1 wrapper, config.py env settings, passwords.py WebCrypto hashing, invite_codes.py).
 Envelope: every response is {"code": str, "detail": str, "data": any}; errors are raised as ApiError(code, detail, status) and rendered by handlers in api/responses.py (422 RequestValidationError, 404 not_found, 405 method_not_allowed, 500 internal_error).
-Routes: GET /; POST /auth/register; POST /auth/login; GET /auth/me; PATCH /auth/me; GET /posts; GET /posts/{post_id}; POST /posts; POST /posts/batch-delete; PATCH /posts/{post_id}; DELETE /posts/{post_id}; GET /posts/{post_id}/comments; POST /posts/{post_id}/comments; DELETE /comments/{comment_id}; POST /activity; POST|GET /admin/invite-codes; DELETE /admin/invite-codes/{code}; GET /admin/users; PATCH /admin/users/{user_id}; DELETE /admin/users/{user_id}; GET /admin/activity.
-Permissions (resource:action:scope): user and internal both hold account:read:self, account:update:self, post:create:any, post:update:own, post:delete:own, comment:create:any, comment:delete:own, activity:write:self. admin holds those plus post:update:any, post:delete:any, comment:delete:any, invite_code:create:any, invite_code:read:any, invite_code:delete:any, user:read:any, user:update:any, user:delete:any, activity:read:any. PUBLIC (never returned to clients) covers post:read:any and comment:read:any.
-Migrations (migrations/, applied in filename order via wrangler d1 migrations apply): 0001_init.sql, 0002_invite_codes_created_by.sql, 0003_user_soft_delete.sql, 0004_activity_events.sql, 0005_user_profile.sql.
+Routes: GET /; POST /auth/register; POST /auth/login; GET /auth/me; PATCH /auth/me; GET /posts; GET /posts/{post_id}; POST /posts; POST /posts/batch-delete; PATCH /posts/{post_id}; DELETE /posts/{post_id}; GET /posts/{post_id}/comments; POST /posts/{post_id}/comments; DELETE /comments/{comment_id}; POST /activity; POST|GET /admin/invite-codes; DELETE /admin/invite-codes/{code}; GET /admin/users; PATCH /admin/users/{user_id}; POST /admin/users/{user_id}/reset-password; DELETE /admin/users/{user_id}; GET /admin/activity.
+Permissions (resource:action:scope): user and internal both hold account:read:self, account:update:self, post:create:any, post:update:own, post:delete:own, comment:create:any, comment:delete:own, activity:write:self. admin holds those plus post:update:any, post:delete:any, comment:delete:any, invite_code:create:any, invite_code:read:any, invite_code:delete:any, user:read:any, user:update:any, user:delete:any, user:reset_password:any, activity:read:any. PUBLIC (never returned to clients) covers post:read:any and comment:read:any.
+Migrations (migrations/, applied in filename order via wrangler d1 migrations apply): 0001_init.sql, 0002_invite_codes_created_by.sql, 0003_user_soft_delete.sql, 0004_activity_events.sql, 0005_user_profile.sql, 0006_user_password_reset.sql.
 D1 binding: env.DB -> database name api-worker-db (configured in wrangler.jsonc).
 Commands: npx wrangler dev (local), npx wrangler d1 migrations apply api-worker-db --local|--remote, npx wrangler deploy, npx wrangler types. JWT_SECRET comes from .dev.vars locally and from a Worker secret in production.
 Conventions: soft delete via deleted_at on users/posts/comments; author display name resolves as nickname -> "first_name last_name" -> email local part, masked as "已注销" for deleted accounts; POST /activity is throttled to one batch per user per 10 seconds (429 rate_limited) while batches containing page_leave always pass; POST /posts/batch-delete soft deletes 1-50 ids and reports per-id failures.
@@ -93,6 +93,7 @@ Every response, success or failure, looks like:
 | DELETE | `/admin/invite-codes/{code}` | `invite_code:delete:any` | unused codes only |
 | GET | `/admin/users` | `user:read:any` | filters `q` (email search), `role`, pagination |
 | PATCH | `/admin/users/{user_id}` | `user:update:any` | email, role and/or profile fields |
+| POST | `/admin/users/{user_id}/reset-password` | `user:reset_password:any` | body `{password?}`; generates one when omitted, kills older tokens |
 | DELETE | `/admin/users/{user_id}` | `user:delete:any` | soft delete; last admin and self are protected |
 | GET | `/admin/activity` | `activity:read:any` | filters `user_id`, `type`, `from`, `to`, pagination |
 
@@ -101,6 +102,14 @@ Every response, success or failure, looks like:
 `nickname` (max 32), `first_name` (max 64), `last_name` (max 64) and `avatar_url` (max 512, must start with `http://` or `https://`) are optional. Blank strings are stored as `NULL`. They appear in `/auth/me`, the login and register `user` objects, and `/admin/users` items.
 
 `author_name` on posts and comments resolves as: `nickname` -> `"first_name last_name"` -> the local part of the email. Accounts with `deleted_at` set render as `已注销`. This is why changing an email no longer changes how the author is displayed once a nickname or name is set.
+
+### Admin password reset
+
+`POST /admin/users/{user_id}/reset-password` requires `user:reset_password:any` (admins only). The body may carry `{"password": "..."}` (8-128 characters) to set a password chosen by the administrator; when the field is omitted the server generates a 16-character temporary one from an unambiguous alphabet (no `0/O` or `1/l/I`).
+
+Only the PBKDF2 hash is written, and the effective plaintext is returned exactly once as `data.password` with `data.generated` telling the two cases apart — nothing is stored in clear text, so a value that is lost means resetting again.
+
+The same request stamps `users.password_changed_at`. `get_current_user` compares the JWT `iat` against it and answers `401 unauthorized` for tokens issued before the reset, so an admin reset also ends that account's live sessions (a token issued in the same second is still accepted). Soft-deleted accounts return `404 not_found`. Resetting your own account is allowed and ends your current session too.
 
 ### Activity logging
 
@@ -115,7 +124,7 @@ Codes use `resource:action:scope`.
 | Role | Codes |
 | --- | --- |
 | `user`, `internal` | `account:read:self`, `account:update:self`, `post:create:any`, `post:update:own`, `post:delete:own`, `comment:create:any`, `comment:delete:own`, `activity:write:self` |
-| `admin` | everything the member roles have, plus `post:update:any`, `post:delete:any`, `comment:delete:any`, `invite_code:create:any`, `invite_code:read:any`, `invite_code:delete:any`, `user:read:any`, `user:update:any`, `user:delete:any`, `activity:read:any` |
+| `admin` | everything the member roles have, plus `post:update:any`, `post:delete:any`, `comment:delete:any`, `invite_code:create:any`, `invite_code:read:any`, `invite_code:delete:any`, `user:read:any`, `user:update:any`, `user:delete:any`, `user:reset_password:any`, `activity:read:any` |
 
 `PUBLIC` is a pseudo role used only to describe unauthenticated read access (`post:read:any`, `comment:read:any`); it is never returned by `/auth/me`.
 
@@ -130,6 +139,7 @@ D1 binding `DB` -> database `api-worker-db` (see `wrangler.jsonc`). Migrations l
 | `0003_user_soft_delete.sql` | `users.deleted_at` |
 | `0004_activity_events.sql` | `activity_events` table and its indexes |
 | `0005_user_profile.sql` | `users.nickname`, `first_name`, `last_name`, `avatar_url` |
+| `0006_user_password_reset.sql` | `users.password_changed_at`, used to expire tokens after an admin reset |
 
 Soft deletion is used for users, posts and comments (`deleted_at`); reads filter it out and deleted authors render as `已注销`. Deleting a post also soft deletes its comments.
 

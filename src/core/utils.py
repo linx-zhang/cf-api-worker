@@ -66,3 +66,12 @@ def sqlite_timestamp(moment: datetime | None = None) -> str:
     """Format a moment the same way D1's ``datetime('now')`` does."""
     moment = moment or utc_now()
     return moment.strftime(SQL_TIMESTAMP_FORMAT)
+
+
+def parse_sqlite_timestamp(value: str) -> int | None:
+    """Parse a ``datetime('now')`` style string into epoch seconds."""
+    try:
+        moment = datetime.strptime(value, SQL_TIMESTAMP_FORMAT)
+    except (TypeError, ValueError):
+        return None
+    return int(moment.replace(tzinfo=UTC).timestamp())
