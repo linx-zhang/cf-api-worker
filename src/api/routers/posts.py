@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 from fastapi.responses import JSONResponse
 
 from api.deps import (
@@ -86,12 +86,33 @@ async def _soft_delete_posts(
 @router.get("")
 async def list_posts(
     page: tuple[int, int] = Depends(pagination),
+    q: str | None = Query(None, max_length=64),
+    author: str | None = Query(None, max_length=64),
     db: Database = Depends(get_db),
 ) -> JSONResponse:
+    """List posts; ``q`` is a fuzzy title filter, ``author`` a fuzzy author filter."""
     limit, offset = page
+    conditions: list[str] = []
+    params: list[object] = []
+    keyword = (q or "").strip()
+    if keyword:
+        conditions.append("p.title LIKE ?")
+        params.append(f"%{keyword}%")
+    author_keyword = (author or "").strip()
+    if author_keyword:
+        # 作者既能按邮箱/昵称搜，也能按「名 姓」搜
+        conditions.append(
+            "(u.email LIKE ? OR u.nickname LIKE ? "
+            "OR (COALESCE(u.first_name, '') || ' ' || COALESCE(u.last_name, '')) LIKE ?)"
+        )
+        like = f"%{author_keyword}%"
+        params.extend([like, like, like])
+    where = "".join(f" AND {condition}" for condition in conditions)
     posts = await db.fetch_all(
-        _POST_SELECT + " ORDER BY p.created_at DESC, p.id DESC LIMIT ? OFFSET ?",
-        (limit, offset),
+        _POST_SELECT
+        + where
+        + " ORDER BY p.created_at DESC, p.id DESC LIMIT ? OFFSET ?",
+        (*params, limit, offset),
     )
     return success([_post_out(post) for post in posts])
 

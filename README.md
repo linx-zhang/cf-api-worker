@@ -83,7 +83,7 @@ Every response, success or failure, looks like:
 | GET | `/auth/me` | signed in | own user object plus `permissions` |
 | PATCH | `/auth/me` | `account:update:self` | profile fields only; `email`/`role` are rejected with `422` |
 | POST | `/auth/logout` | signed in | stamps `token_invalidated_at`, so every token of this account issued before now stops working |
-| GET | `/posts` | public | `limit` (1-100), `offset` |
+| GET | `/posts` | public | `limit` (1-100), `offset`; optional `q` (fuzzy title match, max 64) and `author` (fuzzy match on email, nickname or "first last") |
 | GET | `/posts/{post_id}` | public | |
 | POST | `/posts` | `post:create:any` | |
 | POST | `/posts/batch-delete` | `post:delete:any` | body `{ids: number[]}`, 1-50 ids, deduplicated |
