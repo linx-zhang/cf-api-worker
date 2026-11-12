@@ -139,6 +139,19 @@ async def me(user: dict = Depends(get_current_user)) -> JSONResponse:
     )
 
 
+@router.post("/logout")
+async def logout(
+    user: dict = Depends(get_current_user),
+    db: Database = Depends(get_db),
+) -> JSONResponse:
+    """End the caller's live sessions: tokens issued before now stop working."""
+    await db.execute(
+        "UPDATE users SET token_invalidated_at = datetime('now') WHERE id = ?",
+        (user["id"],),
+    )
+    return success({"id": user["id"]}, detail="logout")
+
+
 @router.patch("/me")
 async def update_me(
     payload: ProfileUpdateIn,

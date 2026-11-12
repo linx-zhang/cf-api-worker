@@ -82,6 +82,7 @@ Every response, success or failure, looks like:
 | POST | `/auth/login` | public | returns the token plus the full user object |
 | GET | `/auth/me` | signed in | own user object plus `permissions` |
 | PATCH | `/auth/me` | `account:update:self` | profile fields only; `email`/`role` are rejected with `422` |
+| POST | `/auth/logout` | signed in | stamps `token_invalidated_at`, so every token of this account issued before now stops working |
 | GET | `/posts` | public | `limit` (1-100), `offset` |
 | GET | `/posts/{post_id}` | public | |
 | POST | `/posts` | `post:create:any` | |
@@ -92,8 +93,8 @@ Every response, success or failure, looks like:
 | POST | `/posts/{post_id}/comments` | `comment:create:any` | `parent_id` must belong to the same post |
 | DELETE | `/comments/{comment_id}` | own or `comment:delete:any` | soft deletes the reply subtree |
 | POST | `/activity` | `activity:write:self` | 1-50 events per batch, throttled (see below) |
-| POST | `/admin/invite-codes` | `invite_code:create:any` | role `internal` or `admin` |
-| GET | `/admin/invite-codes` | `invite_code:read:any` | filters `status`, `role`, pagination |
+| POST | `/admin/invite-codes` | `invite_code:create:any` | role `internal` or `admin`; optional `note` (max 64) records who the code was handed to |
+| GET | `/admin/invite-codes` | `invite_code:read:any` | filters `status`, `role`, pagination; each item carries `note` and `used_by_email` (`null` until someone registers with it) |
 | DELETE | `/admin/invite-codes/{code}` | `invite_code:delete:any` | unused codes only |
 | GET | `/admin/users` | `user:read:any` | filters `q` (email search), `role`, pagination |
 | PATCH | `/admin/users/{user_id}` | `user:update:any` | email, role and/or profile fields |
@@ -113,7 +114,11 @@ Every response, success or failure, looks like:
 
 Only the PBKDF2 hash is written, and the effective plaintext is returned exactly once as `data.password` with `data.generated` telling the two cases apart — nothing is stored in clear text, so a value that is lost means resetting again.
 
-The same request stamps `users.password_changed_at`. `get_current_user` compares the JWT `iat` against it and answers `401 unauthorized` for tokens issued before the reset, so an admin reset also ends that account's live sessions (a token issued in the same second is still accepted). Soft-deleted accounts return `404 not_found`. Resetting your own account is allowed and ends your current session too.
+The same request stamps `users.token_invalidated_at`. `get_current_user` compares the JWT `iat` against it and answers `401 unauthorized` for tokens issued before the reset, so an admin reset also ends that account's live sessions (a token issued in the same second is still accepted). Soft-deleted accounts return `404 not_found`. Resetting your own account is allowed and ends your current session too.
+
+### Logout
+
+`POST /auth/logout` (signed in) stamps `users.token_invalidated_at` with `datetime('now')`. Because `get_current_user` rejects tokens whose `iat` is older than that stamp, logging out revokes every token already issued to the account — clearing the browser's copy is no longer the only thing that happens. The same caveat applies: a token issued within the same second stays valid. A password reset writes the same column, so reset and logout share one mechanism.
 
 ### Activity logging
 
@@ -149,6 +154,8 @@ D1 binding `DB` -> database `api-worker-db` (see `wrangler.jsonc`). Migrations l
 | `0005_user_profile.sql` | `users.nickname`, `first_name`, `last_name`, `avatar_url` |
 | `0006_user_password_reset.sql` | `users.password_changed_at`, used to expire tokens after an admin reset |
 | `0007_user_last_active.sql` | `users.last_active_at`, backfilled from `activity_events` so retention cannot erase it |
+| `0008_invite_code_note.sql` | `invite_codes.note`, a free-form reminder of who the code was handed to |
+| `0009_token_invalidated_at.sql` | renames `users.password_changed_at` to `token_invalidated_at`; reset and logout both stamp it |
 
 Soft deletion is used for users, posts and comments (`deleted_at`); reads filter it out and deleted authors render as `已注销`. Deleting a post also soft deletes its comments.
 

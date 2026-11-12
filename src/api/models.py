@@ -249,6 +249,15 @@ class InviteCodeCreateIn(BaseModel):
     role: Literal["internal", "admin"]
     count: int = Field(default=1, ge=1, le=50)
     expires_in_days: int = Field(default=7, ge=1, le=365)
+    note: str | None = Field(default=None, max_length=64)
+
+    @field_validator("note")
+    @classmethod
+    def _note(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        return value or None
 
 
 class InviteCodeOut(BaseModel):
@@ -259,3 +268,6 @@ class InviteCodeOut(BaseModel):
     used_at: str | None = None
     created_by: int | None = None
     created_by_email: str | None = None
+    note: str | None = None
+    used_by: int | None = None
+    used_by_email: str | None = None

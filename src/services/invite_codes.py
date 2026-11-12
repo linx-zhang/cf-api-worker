@@ -42,20 +42,27 @@ _ALIASED_STATUS_CONDITIONS = _status_conditions("ic")
 
 _SELECT = (
     "SELECT ic.code, ic.role, ic.expires_at, ic.created_at, ic.used_at, "
-    "ic.created_by, u.email AS created_by_email "
-    "FROM invite_codes ic LEFT JOIN users u ON u.id = ic.created_by"
+    "ic.created_by, ic.note, ic.used_by, "
+    "u.email AS created_by_email, ub.email AS used_by_email "
+    "FROM invite_codes ic LEFT JOIN users u ON u.id = ic.created_by "
+    "LEFT JOIN users ub ON ub.id = ic.used_by"
 )
 
 
 def generate_invite_codes(
-    role: str, count: int, expires_in_days: int | None
+    role: str, count: int, expires_in_days: int | None, note: str | None = None
 ) -> list[dict]:
     """Build ``count`` uuid4 codes; ``expires_at`` matches D1's timestamp format."""
     expires_at = None
     if expires_in_days is not None:
         expires_at = sqlite_timestamp(utc_now() + timedelta(days=expires_in_days))
     return [
-        {"code": str(uuid.uuid4()), "role": role, "expires_at": expires_at}
+        {
+            "code": str(uuid.uuid4()),
+            "role": role,
+            "expires_at": expires_at,
+            "note": note,
+        }
         for _ in range(count)
     ]
 
@@ -65,9 +72,11 @@ def build_insert_sql(codes: list[dict]) -> str:
     statements = []
     for item in codes:
         expiry = "NULL" if item["expires_at"] is None else f"'{item['expires_at']}'"
+        note = item.get("note")
+        note_sql = "NULL" if not note else "'" + note.replace("'", "''") + "'"
         statements.append(
-            "INSERT INTO invite_codes (code, role, expires_at) "
-            f"VALUES ('{item['code']}', '{item['role']}', {expiry})"
+            "INSERT INTO invite_codes (code, role, expires_at, note) "
+            f"VALUES ('{item['code']}', '{item['role']}', {expiry}, {note_sql})"
         )
     return "; ".join(statements)
 
@@ -77,12 +86,20 @@ async def insert_codes(
 ) -> list[dict]:
     if not codes:
         return []
-    values = ", ".join("(?, ?, ?, ?)" for _ in codes)
+    values = ", ".join("(?, ?, ?, ?, ?)" for _ in codes)
     params: list[object] = []
     for item in codes:
-        params.extend((item["code"], item["role"], item["expires_at"], created_by))
+        params.extend(
+            (
+                item["code"],
+                item["role"],
+                item["expires_at"],
+                created_by,
+                item.get("note"),
+            )
+        )
     await db.execute(
-        "INSERT INTO invite_codes (code, role, expires_at, created_by) "
+        "INSERT INTO invite_codes (code, role, expires_at, created_by, note) "
         f"VALUES {values}",
         params,
     )

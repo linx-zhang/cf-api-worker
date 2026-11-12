@@ -143,7 +143,9 @@ async def create_invite_codes(
     admin: dict = Depends(require_permission(INVITE_CODE_CREATE_ANY)),
     db: Database = Depends(get_db),
 ) -> JSONResponse:
-    codes = generate_invite_codes(payload.role, payload.count, payload.expires_in_days)
+    codes = generate_invite_codes(
+        payload.role, payload.count, payload.expires_in_days, payload.note
+    )
     rows = await insert_codes(db, codes, created_by=admin["id"])
     return success(
         [InviteCodeOut(**row).model_dump() for row in rows],
@@ -299,7 +301,7 @@ async def reset_user_password(
     a generated temporary one.
 
     The chosen password is returned exactly once and never stored in clear text.
-    ``password_changed_at`` makes tokens issued before this call stop working,
+    ``token_invalidated_at`` makes tokens issued before this call stop working,
     so an admin reset also ends existing sessions.
     """
     target = await _fetch_admin_user(db, user_id)
@@ -311,7 +313,7 @@ async def reset_user_password(
     password_hash = await hash_password(password)
     reset_at = sqlite_timestamp()
     changed = await db.execute(
-        "UPDATE users SET password_hash = ?, password_changed_at = ? "
+        "UPDATE users SET password_hash = ?, token_invalidated_at = ? "
         "WHERE id = ? AND deleted_at IS NULL",
         (password_hash, reset_at, user_id),
     )
