@@ -22,7 +22,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from infra.invite_codes import build_insert_sql, generate_invite_codes
+from services.invite_codes import build_insert_sql, generate_invite_codes
 
 ROLES = ("user", "internal", "admin")
 DEFAULT_DB = "api-worker-db"

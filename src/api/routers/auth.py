@@ -29,8 +29,8 @@ from core.permissions import ACCOUNT_UPDATE_SELF, permissions_for_role
 from core.security import create_access_token
 from infra.config import Settings
 from infra.db import Database
-from infra.invite_codes import UNUSED_CONDITION
 from infra.passwords import hash_password, verify_password
+from services.invite_codes import UNUSED_CONDITION
 
 router = APIRouter()
 

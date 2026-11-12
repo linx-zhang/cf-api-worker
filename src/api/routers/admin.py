@@ -54,13 +54,13 @@ from core.permissions import (
 )
 from core.utils import sqlite_timestamp
 from infra.db import Database
-from infra.invite_codes import (
+from infra.passwords import generate_temporary_password, hash_password
+from services.invite_codes import (
     delete_unused,
     generate_invite_codes,
     insert_codes,
     list_codes,
 )
-from infra.passwords import generate_temporary_password, hash_password
 
 router = APIRouter()
 

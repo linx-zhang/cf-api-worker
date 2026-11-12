@@ -1,7 +1,7 @@
 <!-- [LLM SYSTEM INSTRUCTION & CONTEXT]
 Project: api-worker - a small blog/reporting backend running on Cloudflare Workers in Python.
 Stack: Cloudflare Workers (python_workers compat flag, Pyodide runtime) + FastAPI (pure-ASGI glue) + D1 (SQLite) + PyJWT + wrangler 4. No ORM: every query is hand-written SQL through src/infra/db.py.
-Layout: src/entry.py (Worker entry, Default entrypoint exported for wrangler) -> src/api/ (app.py router wiring, deps.py auth/permissions, models.py Pydantic schemas, responses.py envelope + error handlers, routers/) -> src/core/ (permissions.py role->codes map, constants.py response codes/details, security.py JWT + PBKDF2, utils.py helpers) -> src/infra/ (db.py D1 wrapper, config.py env settings, passwords.py WebCrypto hashing, invite_codes.py, activity_retention.py cron purge).
+Layout: src/entry.py (Worker entry, Default entrypoint exported for wrangler) -> src/api/ (app.py router wiring, deps.py auth/permissions, models.py Pydantic schemas, responses.py envelope + error handlers, routers/) -> src/services/ (business rules that need SQL: invite_codes.py) -> src/core/ (permissions.py role->codes map, constants.py response codes/details, security.py JWT + PBKDF2, utils.py helpers) -> src/infra/ (db.py D1 wrapper, config.py env settings, passwords.py WebCrypto hashing) -> src/tasks/ (cron.py cron entry, activity_retention.py purge job).
 Envelope: every response is {"code": str, "detail": str, "data": any}; errors are raised as ApiError(code, detail, status) and rendered by handlers in api/responses.py (422 RequestValidationError, 404 not_found, 405 method_not_allowed, 500 internal_error).
 Routes: GET /; POST /auth/register; POST /auth/login; GET /auth/me; PATCH /auth/me; GET /posts; GET /posts/{post_id}; POST /posts; POST /posts/batch-delete; PATCH /posts/{post_id}; DELETE /posts/{post_id}; GET /posts/{post_id}/comments; POST /posts/{post_id}/comments; DELETE /comments/{comment_id}; POST /activity; POST|GET /admin/invite-codes; DELETE /admin/invite-codes/{code}; GET /admin/users; PATCH /admin/users/{user_id}; POST /admin/users/{user_id}/reset-password; DELETE /admin/users/{user_id}; GET /admin/activity.
 Permissions (resource:action:scope): user and internal both hold account:read:self, account:update:self, post:create:any, post:update:own, post:delete:own, comment:create:any, comment:delete:own, activity:write:self. admin holds those plus post:update:any, post:delete:any, comment:delete:any, invite_code:create:any, invite_code:read:any, invite_code:delete:any, user:read:any, user:update:any, user:delete:any, user:reset_password:any, activity:read:any. PUBLIC (never returned to clients) covers post:read:any and comment:read:any.
@@ -44,6 +44,8 @@ src/
       comments.py           comment list/create/delete (soft delete with replies)
       admin.py              invite codes, users, activity log
       activity.py           client activity ingestion with per-user throttling
+  services/
+    invite_codes.py         invite code generation, listing and deletion
   core/
     permissions.py          permission codes and role -> codes mapping
     constants.py            response codes and detail strings (public contract)
@@ -53,8 +55,9 @@ src/
     db.py                   D1 wrapper: fetch_one, fetch_all, execute, insert_returning
     config.py               environment settings (JWT secret, expiry, algorithm)
     passwords.py            WebCrypto-backed password hashing
-    invite_codes.py         invite code generation, listing and deletion
-    activity_retention.py   scheduled purge of activity_events older than 30 days
+  tasks/
+    cron.py                 cron entry called by entry.py's scheduled()
+    activity_retention.py   purge of activity_events older than 30 days
 migrations/                 numbered SQL migrations applied by wrangler
 ```
 
@@ -118,7 +121,7 @@ The same request stamps `users.password_changed_at`. `get_current_user` compares
 
 Writes are throttled to one batch per user per 10 seconds. The check reads the newest stored batch timestamp from D1, so the window is shared by every isolate; rejected batches perform no writes and return `429` with `rate_limited` and a `Retry-After` header. A batch containing `page_leave` always passes, because it carries the only `duration_ms` value.
 
-Rows are not kept forever: a Cron Trigger (`15 18 * * *` UTC, configured under `triggers.crons` in `wrangler.jsonc`) calls `scheduled()` in `src/entry.py` once a day, which deletes `activity_events` rows whose server receive time (`created_at`) is older than 30 days. Deletion runs in batches of 5000 (`src/infra/activity_retention.py`) so one statement never has to carry a full sweep, and age is measured on `created_at` rather than the client-supplied `ts`.
+Rows are not kept forever: a Cron Trigger (`15 18 * * *` UTC, configured under `triggers.crons` in `wrangler.jsonc`) calls `scheduled()` in `src/entry.py` (the method name is fixed by the Workers runtime, like `fetch()`), which delegates one line to `run_cron()` in `src/tasks/cron.py`; that runs the daily `activity_events` purge and deletes rows whose server receive time (`created_at`) is older than 30 days. Deletion runs in batches of 5000 (`src/tasks/activity_retention.py`) so one statement never has to carry a full sweep, and age is measured on `created_at` rather than the client-supplied `ts`.
 
 Because the purge deletes rows, "last active" is cached on `users.last_active_at` instead of being derived from `activity_events`: every accepted batch runs one `UPDATE ... MAX(...)` on the user row, so the value only moves forward, and `/admin/users` reads the column directly (no per-user subquery over the activity table). Deleting old events therefore never makes a dormant account look like it was never active.
 

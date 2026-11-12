@@ -1,4 +1,4 @@
-"""Retention for ``activity_events``: drop rows older than a fixed window.
+"""Cron job: drop ``activity_events`` rows older than a fixed window.
 
 The table is append-only from the API's point of view; this module is the only
 place that deletes from it. Rows go out in bounded batches, because one huge
