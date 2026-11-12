@@ -122,6 +122,47 @@ async def get_post(post_id: int, db: Database = Depends(get_db)) -> JSONResponse
     return success(_post_out(await _get_post(db, post_id)))
 
 
+@router.get("/{post_id}/neighbors")
+async def get_post_neighbors(
+    post_id: int, db: Database = Depends(get_db)
+) -> JSONResponse:
+    """Neighbouring posts in list order plus this post's 0-based position.
+
+    ``prev`` is the newer post (earlier in the list) and ``next`` the older one,
+    matching how the list page reads top to bottom.
+    """
+    post = await _get_post(db, post_id)
+    created_at = post["created_at"]
+    pid = post["id"]
+    newer_condition = (
+        "deleted_at IS NULL AND (created_at > ? OR (created_at = ? AND id > ?))"
+    )
+    older_condition = (
+        "deleted_at IS NULL AND (created_at < ? OR (created_at = ? AND id < ?))"
+    )
+    params = (created_at, created_at, pid)
+    counted = await db.fetch_one(
+        f"SELECT COUNT(*) AS newer FROM posts WHERE {newer_condition}", params
+    )
+    newer = await db.fetch_one(
+        f"SELECT id, title FROM posts WHERE {newer_condition} "
+        "ORDER BY created_at ASC, id ASC LIMIT 1",
+        params,
+    )
+    older = await db.fetch_one(
+        f"SELECT id, title FROM posts WHERE {older_condition} "
+        "ORDER BY created_at DESC, id DESC LIMIT 1",
+        params,
+    )
+    return success(
+        {
+            "index": int(counted["newer"]) if counted else 0,
+            "prev": dict(newer) if newer else None,
+            "next": dict(older) if older else None,
+        }
+    )
+
+
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def create_post(
     payload: PostIn,
