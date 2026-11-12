@@ -67,8 +67,7 @@ router = APIRouter()
 _ADMIN_USER_SELECT = (
     "SELECT u.id, u.email, u.role, u.created_at, u.deleted_at, "
     "u.nickname, u.first_name, u.last_name, u.avatar_url, "
-    "(SELECT MAX(e.created_at) FROM activity_events e "
-    "WHERE e.user_id = u.id) AS last_active_at FROM users u"
+    "u.last_active_at FROM users u"
 )
 
 _TIMESTAMP_HELP = "expected an ISO date/datetime or epoch milliseconds"

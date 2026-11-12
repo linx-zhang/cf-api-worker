@@ -1,11 +1,11 @@
 <!-- [LLM SYSTEM INSTRUCTION & CONTEXT]
 Project: api-worker - a small blog/reporting backend running on Cloudflare Workers in Python.
 Stack: Cloudflare Workers (python_workers compat flag, Pyodide runtime) + FastAPI (pure-ASGI glue) + D1 (SQLite) + PyJWT + wrangler 4. No ORM: every query is hand-written SQL through src/infra/db.py.
-Layout: src/entry.py (Worker entry, Default entrypoint exported for wrangler) -> src/api/ (app.py router wiring, deps.py auth/permissions, models.py Pydantic schemas, responses.py envelope + error handlers, routers/) -> src/core/ (permissions.py role->codes map, constants.py response codes/details, security.py JWT + PBKDF2, utils.py helpers) -> src/infra/ (db.py D1 wrapper, config.py env settings, passwords.py WebCrypto hashing, invite_codes.py).
+Layout: src/entry.py (Worker entry, Default entrypoint exported for wrangler) -> src/api/ (app.py router wiring, deps.py auth/permissions, models.py Pydantic schemas, responses.py envelope + error handlers, routers/) -> src/core/ (permissions.py role->codes map, constants.py response codes/details, security.py JWT + PBKDF2, utils.py helpers) -> src/infra/ (db.py D1 wrapper, config.py env settings, passwords.py WebCrypto hashing, invite_codes.py, activity_retention.py cron purge).
 Envelope: every response is {"code": str, "detail": str, "data": any}; errors are raised as ApiError(code, detail, status) and rendered by handlers in api/responses.py (422 RequestValidationError, 404 not_found, 405 method_not_allowed, 500 internal_error).
 Routes: GET /; POST /auth/register; POST /auth/login; GET /auth/me; PATCH /auth/me; GET /posts; GET /posts/{post_id}; POST /posts; POST /posts/batch-delete; PATCH /posts/{post_id}; DELETE /posts/{post_id}; GET /posts/{post_id}/comments; POST /posts/{post_id}/comments; DELETE /comments/{comment_id}; POST /activity; POST|GET /admin/invite-codes; DELETE /admin/invite-codes/{code}; GET /admin/users; PATCH /admin/users/{user_id}; POST /admin/users/{user_id}/reset-password; DELETE /admin/users/{user_id}; GET /admin/activity.
 Permissions (resource:action:scope): user and internal both hold account:read:self, account:update:self, post:create:any, post:update:own, post:delete:own, comment:create:any, comment:delete:own, activity:write:self. admin holds those plus post:update:any, post:delete:any, comment:delete:any, invite_code:create:any, invite_code:read:any, invite_code:delete:any, user:read:any, user:update:any, user:delete:any, user:reset_password:any, activity:read:any. PUBLIC (never returned to clients) covers post:read:any and comment:read:any.
-Migrations (migrations/, applied in filename order via wrangler d1 migrations apply): 0001_init.sql, 0002_invite_codes_created_by.sql, 0003_user_soft_delete.sql, 0004_activity_events.sql, 0005_user_profile.sql, 0006_user_password_reset.sql.
+Migrations (migrations/, applied in filename order via wrangler d1 migrations apply): 0001_init.sql, 0002_invite_codes_created_by.sql, 0003_user_soft_delete.sql, 0004_activity_events.sql, 0005_user_profile.sql, 0006_user_password_reset.sql, 0007_user_last_active.sql.
 D1 binding: env.DB -> database name api-worker-db (configured in wrangler.jsonc).
 Commands: npx wrangler dev (local), npx wrangler d1 migrations apply api-worker-db --local|--remote, npx wrangler deploy, npx wrangler types. JWT_SECRET comes from .dev.vars locally and from a Worker secret in production.
 Conventions: soft delete via deleted_at on users/posts/comments; author display name resolves as nickname -> "first_name last_name" -> email local part, masked as "已注销" for deleted accounts; POST /activity is throttled to one batch per user per 10 seconds (429 rate_limited) while batches containing page_leave always pass; POST /posts/batch-delete soft deletes 1-50 ids and reports per-id failures.
@@ -54,6 +54,7 @@ src/
     config.py               environment settings (JWT secret, expiry, algorithm)
     passwords.py            WebCrypto-backed password hashing
     invite_codes.py         invite code generation, listing and deletion
+    activity_retention.py   scheduled purge of activity_events older than 30 days
 migrations/                 numbered SQL migrations applied by wrangler
 ```
 
@@ -117,6 +118,10 @@ The same request stamps `users.password_changed_at`. `get_current_user` compares
 
 Writes are throttled to one batch per user per 10 seconds. The check reads the newest stored batch timestamp from D1, so the window is shared by every isolate; rejected batches perform no writes and return `429` with `rate_limited` and a `Retry-After` header. A batch containing `page_leave` always passes, because it carries the only `duration_ms` value.
 
+Rows are not kept forever: a Cron Trigger (`15 18 * * *` UTC, configured under `triggers.crons` in `wrangler.jsonc`) calls `scheduled()` in `src/entry.py` once a day, which deletes `activity_events` rows whose server receive time (`created_at`) is older than 30 days. Deletion runs in batches of 5000 (`src/infra/activity_retention.py`) so one statement never has to carry a full sweep, and age is measured on `created_at` rather than the client-supplied `ts`.
+
+Because the purge deletes rows, "last active" is cached on `users.last_active_at` instead of being derived from `activity_events`: every accepted batch runs one `UPDATE ... MAX(...)` on the user row, so the value only moves forward, and `/admin/users` reads the column directly (no per-user subquery over the activity table). Deleting old events therefore never makes a dormant account look like it was never active.
+
 ## Permissions
 
 Codes use `resource:action:scope`.
@@ -140,6 +145,7 @@ D1 binding `DB` -> database `api-worker-db` (see `wrangler.jsonc`). Migrations l
 | `0004_activity_events.sql` | `activity_events` table and its indexes |
 | `0005_user_profile.sql` | `users.nickname`, `first_name`, `last_name`, `avatar_url` |
 | `0006_user_password_reset.sql` | `users.password_changed_at`, used to expire tokens after an admin reset |
+| `0007_user_last_active.sql` | `users.last_active_at`, backfilled from `activity_events` so retention cannot erase it |
 
 Soft deletion is used for users, posts and comments (`deleted_at`); reads filter it out and deleted authors render as `已注销`. Deleting a post also soft deletes its comments.
 

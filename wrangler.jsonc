@@ -13,6 +13,11 @@
 	"observability": {
 		"enabled": true
 	},
+	// 活动记录保留清理：删除 activity_events 中 created_at 超过 30 天的行。
+	// cron 走 UTC：18:15 UTC = 北京时间 02:15，避开访问高峰。
+	"triggers": {
+		"crons": ["15 18 * * *"]
+	},
 	"d1_databases": [
 		{
 			"binding": "DB",

@@ -76,4 +76,13 @@ async def record_activity(
             f"VALUES {values}",
             params,
         )
+
+    # Cache "last active" on the user row: the daily retention purge deletes
+    # activity_events rows, and MAX() keeps this value monotonic when batches race.
+    await db.execute(
+        "UPDATE users SET last_active_at = "
+        "MAX(COALESCE(last_active_at, datetime('now')), datetime('now')) "
+        "WHERE id = ?",
+        (user["id"],),
+    )
     return success({"accepted": len(rows)}, detail=DETAIL_ACTIVITY_RECORDED)
