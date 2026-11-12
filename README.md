@@ -85,7 +85,7 @@ Every response, success or failure, looks like:
 | POST | `/auth/logout` | signed in | stamps `token_invalidated_at`, so every token of this account issued before now stops working |
 | GET | `/posts` | public | `limit` (1-100), `offset`; optional `q` (fuzzy title match, max 64) and `author` (fuzzy match on email, nickname or "first last") |
 | GET | `/posts/{post_id}` | public | |
-| GET | `/posts/{post_id}/neighbors` | public | `{index, prev, next}` in list order: `prev` newer, `next` older, each `{id, title}` or `null` |
+| GET | `/posts/{post_id}/neighbors` | public | `{index, prev, next}` in list order: `prev` newer, `next` older, each `{id, title}` or `null`. Optional `q`/`author` keep the neighbours inside the filtered result set; `index` is only filled without filters |
 | POST | `/posts` | `post:create:any` | |
 | POST | `/posts/batch-delete` | `post:delete:any` | body `{ids: number[]}`, 1-50 ids, deduplicated |
 | PATCH | `/posts/{post_id}` | own or `post:update:any` | |

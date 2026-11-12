@@ -83,15 +83,11 @@ async def _soft_delete_posts(
     return deleted_ids, deleted_comments
 
 
-@router.get("")
-async def list_posts(
-    page: tuple[int, int] = Depends(pagination),
-    q: str | None = Query(None, max_length=64),
-    author: str | None = Query(None, max_length=64),
-    db: Database = Depends(get_db),
-) -> JSONResponse:
-    """List posts; ``q`` is a fuzzy title filter, ``author`` a fuzzy author filter."""
-    limit, offset = page
+_POST_LIST_FILTERS = "SELECT p.id, p.title FROM posts p JOIN users u ON u.id = p.author_id WHERE p.deleted_at IS NULL"
+
+
+def _filter_conditions(q: str | None, author: str | None) -> tuple[list[str], list[object]]:
+    """Shared ``q`` / ``author`` predicates so list and neighbours never drift."""
     conditions: list[str] = []
     params: list[object] = []
     keyword = (q or "").strip()
@@ -107,6 +103,19 @@ async def list_posts(
         )
         like = f"%{author_keyword}%"
         params.extend([like, like, like])
+    return conditions, params
+
+
+@router.get("")
+async def list_posts(
+    page: tuple[int, int] = Depends(pagination),
+    q: str | None = Query(None, max_length=64),
+    author: str | None = Query(None, max_length=64),
+    db: Database = Depends(get_db),
+) -> JSONResponse:
+    """List posts; ``q`` is a fuzzy title filter, ``author`` a fuzzy author filter."""
+    limit, offset = page
+    conditions, params = _filter_conditions(q, author)
     where = "".join(f" AND {condition}" for condition in conditions)
     posts = await db.fetch_all(
         _POST_SELECT
@@ -124,41 +133,64 @@ async def get_post(post_id: int, db: Database = Depends(get_db)) -> JSONResponse
 
 @router.get("/{post_id}/neighbors")
 async def get_post_neighbors(
-    post_id: int, db: Database = Depends(get_db)
+    post_id: int,
+    q: str | None = Query(None, max_length=64),
+    author: str | None = Query(None, max_length=64),
+    db: Database = Depends(get_db),
 ) -> JSONResponse:
-    """Neighbouring posts in list order plus this post's 0-based position.
+    """Neighbouring posts in the *currently filtered* list order.
 
     ``prev`` is the newer post (earlier in the list) and ``next`` the older one,
-    matching how the list page reads top to bottom.
+    matching how the list page reads top to bottom. ``index`` is the 0-based
+    position in the whole list and is only returned when no filter is active —
+    a filtered page number would need its own COUNT over the same predicates.
+    When a filter is active and this post itself does not match it, both
+    neighbours are null so the detail page hides the navigation instead of
+    jumping outside the reader's own result set.
     """
     post = await _get_post(db, post_id)
     created_at = post["created_at"]
     pid = post["id"]
-    newer_condition = (
-        "deleted_at IS NULL AND (created_at > ? OR (created_at = ? AND id > ?))"
-    )
-    older_condition = (
-        "deleted_at IS NULL AND (created_at < ? OR (created_at = ? AND id < ?))"
-    )
-    params = (created_at, created_at, pid)
-    counted = await db.fetch_one(
-        f"SELECT COUNT(*) AS newer FROM posts WHERE {newer_condition}", params
-    )
+    conditions, filter_params = _filter_conditions(q, author)
+    where = "".join(f" AND {condition}" for condition in conditions)
+    params = (*filter_params, created_at, created_at, pid)
+
     newer = await db.fetch_one(
-        f"SELECT id, title FROM posts WHERE {newer_condition} "
-        "ORDER BY created_at ASC, id ASC LIMIT 1",
+        _POST_LIST_FILTERS
+        + where
+        + " AND (p.created_at > ? OR (p.created_at = ? AND p.id > ?))"
+        + " ORDER BY p.created_at ASC, p.id ASC LIMIT 1",
         params,
     )
     older = await db.fetch_one(
-        f"SELECT id, title FROM posts WHERE {older_condition} "
-        "ORDER BY created_at DESC, id DESC LIMIT 1",
+        _POST_LIST_FILTERS
+        + where
+        + " AND (p.created_at < ? OR (p.created_at = ? AND p.id < ?))"
+        + " ORDER BY p.created_at DESC, p.id DESC LIMIT 1",
         params,
     )
+
+    in_filter = True
+    if conditions:
+        in_filter = (
+            await db.fetch_one(_POST_LIST_FILTERS + where + " AND p.id = ?", (*filter_params, pid))
+            is not None
+        )
+
+    index: int | None = None
+    if not conditions:
+        counted = await db.fetch_one(
+            "SELECT COUNT(*) AS newer FROM posts WHERE deleted_at IS NULL "
+            "AND (created_at > ? OR (created_at = ? AND id > ?))",
+            (created_at, created_at, pid),
+        )
+        index = int(counted["newer"]) if counted else 0
+
     return success(
         {
-            "index": int(counted["newer"]) if counted else 0,
-            "prev": dict(newer) if newer else None,
-            "next": dict(older) if older else None,
+            "index": index,
+            "prev": dict(newer) if newer and in_filter else None,
+            "next": dict(older) if older and in_filter else None,
         }
     )
 
