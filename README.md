@@ -280,7 +280,7 @@ The steps below exist because an LLM's context is finite and gets compacted. `00
 **Adding or changing a table / column / index**
 
 1. Write `migrations/00NN_<name>.sql`. Never edit an already-applied migration.
-2. Apply it locally, then remotely: `npx wrangler d1 migrations apply api-worker-db --local` / `--remote`.
+2. Apply it locally, then remotely: `npx wrangler d1 migrations apply api-worker-db --local` / `--remote`. **Always through `migrations apply`.** `d1 execute --file migrations/x.sql` runs the SQL but writes nothing to `d1_migrations`, so the next `migrations apply` re-runs that file — and a table rebuild like `0012` is not idempotent, so it fails and blocks every migration behind it. If it ever happens, insert the missing row: `INSERT INTO d1_migrations (name, applied_at) VALUES ('0012_activity_anonymous.sql', datetime('now'))`, then confirm with `wrangler d1 migrations list api-worker-db --remote` (it must print *No migrations to apply*).
 3. Run `npm run schema` — this regenerates `docs/schema.md` from the live database.
 4. Add a row to the migration table in [Database](#database), with the *reason*, not just the column name.
 5. Commit the migration, `docs/schema.md` and this README in **one** commit, so the three can never be reviewed apart.
