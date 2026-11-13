@@ -19,7 +19,7 @@ from api.models import (
     UserPasswordResetOut,
     UserUpdateIn,
 )
-from api.responses import ApiError, success
+from api.responses import ApiError, split_page, success
 from core.constants import (
     CODE_CANNOT_CHANGE_OWN_ROLE,
     CODE_CANNOT_DELETE_SELF,
@@ -166,11 +166,13 @@ async def list_invite_codes(
 ) -> JSONResponse:
     limit, offset = page
     rows, total = await list_codes(
-        db, status=status_filter, role=role, limit=limit, offset=offset
+        db, status=status_filter, role=role, limit=limit + 1, offset=offset
     )
+    items, has_next = split_page(rows, limit)
     return success(
         {
-            "items": [InviteCodeOut(**row).model_dump() for row in rows],
+            "items": [InviteCodeOut(**row).model_dump() for row in items],
+            "has_next": has_next,
             "total": total,
         }
     )
@@ -224,9 +226,16 @@ async def list_users(
     rows = await db.fetch_all(
         f"{_ADMIN_USER_SELECT}{where} "
         "ORDER BY u.created_at DESC, u.id DESC LIMIT ? OFFSET ?",
-        [*params, limit, offset],
+        [*params, limit + 1, offset],
     )
-    return success({"items": [_admin_user_out(row) for row in rows], "total": total})
+    items, has_next = split_page(rows, limit)
+    return success(
+        {
+            "items": [_admin_user_out(row) for row in items],
+            "has_next": has_next,
+            "total": total,
+        }
+    )
 
 
 @router.patch("/users/{user_id}")
@@ -380,7 +389,12 @@ async def list_activity(
     admin: dict = Depends(require_permission(ACTIVITY_READ_ANY)),
     db: Database = Depends(get_db),
 ) -> JSONResponse:
-    """Query client activity; ``from``/``to`` filter on server receive time."""
+    """Query client activity; ``from``/``to`` filter on server receive time.
+
+    No ``total``: a COUNT over the one unbounded table here would cost a second
+    round trip on every page, and the only thing the UI needs is "is there a next
+    page". So one extra row is fetched and ``has_next`` is derived from it.
+    """
     clauses: list[str] = []
     params: list[object] = []
     if user_id is not None:
@@ -405,17 +419,15 @@ async def list_activity(
         params.append(end)
     where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
 
-    total_row = await db.fetch_one(
-        f"SELECT COUNT(*) AS total FROM activity_events e{where}", params
-    )
-    total = int(total_row["total"]) if total_row else 0
+    # Fetch one row past the page: its presence is the only signal the UI needs.
     rows = await db.fetch_all(
         "SELECT e.id, e.user_id, u.email AS user_email, e.type, e.path, e.ts, "
         "e.duration_ms, e.created_at FROM activity_events e "
         f"JOIN users u ON u.id = e.user_id{where} "
         "ORDER BY e.created_at DESC, e.id DESC LIMIT ? OFFSET ?",
-        [*params, limit, offset],
+        [*params, limit + 1, offset],
     )
+    items, has_next = split_page(rows, limit)
     return success(
-        {"items": [ActivityOut(**row).model_dump() for row in rows], "total": total}
+        {"items": [ActivityOut(**row).model_dump() for row in items], "has_next": has_next}
     )

@@ -85,7 +85,7 @@ Every response, success or failure, looks like:
 | GET | `/auth/me` | signed in | own user object plus `permissions` |
 | PATCH | `/auth/me` | `account:update:self` | profile fields only; `email`/`role` are rejected with `422` |
 | POST | `/auth/logout` | signed in | stamps `token_invalidated_at`, so every token of this account issued before now stops working |
-| GET | `/posts` | public | `limit` (1-100), `offset`; optional `q` (fuzzy title match, max 64) and `author` (fuzzy match on email, nickname or "first last") |
+| GET | `/posts` | public | `limit` (1-100), `offset`; optional `q` (fuzzy title match, max 64) and `author` (fuzzy match on email, nickname or "first last"); returns `{items, has_next}` |
 | GET | `/posts/{post_id}` | public | |
 | GET | `/posts/{post_id}/neighbors` | public | `{index, prev, next}` in list order: `prev` newer, `next` older, each `{id, title}` or `null`. Optional `q`/`author` keep the neighbours inside the filtered result set; `index` is only filled without filters |
 | POST | `/posts` | `post:create:any` | |
@@ -103,7 +103,23 @@ Every response, success or failure, looks like:
 | PATCH | `/admin/users/{user_id}` | `user:update:any` | email, role and/or profile fields |
 | POST | `/admin/users/{user_id}/reset-password` | `user:reset_password:any` | body `{password?}`; generates one when omitted, kills older tokens |
 | DELETE | `/admin/users/{user_id}` | `user:delete:any` | soft delete; last admin and self are protected |
-| GET | `/admin/activity` | `activity:read:any` | filters `user_id`, `type`, `from`, `to`, pagination |
+| GET | `/admin/activity` | `activity:read:any` | filters `user_id`, `type`, `from`, `to`; `limit` (1-200, default 50) + `offset`; returns `{items, has_next}` — no `total`, see the pagination note below |
+
+### Pagination: one standard
+
+Every paginated list returns **`{items, has_next}`** and takes **`limit` + `offset` only** (`limit` 1-100 default 20, except `/admin/activity` which allows 200 default 50). `page` / `page_size` are not supported.
+
+The rule, implemented once in `split_page()` (`src/api/responses.py`):
+
+1. the handler asks D1 for `limit + 1` rows;
+2. `split_page()` drops the extra row and sets `has_next`;
+3. the client sends `limit` and reads `has_next` — it never asks for `limit + 1` and never slices.
+
+Why the server owns the probe: one statement per page (no second COUNT), the probe row is never serialized (no wasted payload, which matters because posts carry their full `body_md`), and every list — blog, admin posts, users, invite codes, activity — behaves identically, so the client has exactly one paging idiom.
+
+`total` is an **optional extra**, returned only by `/admin/users` and `/admin/invite-codes` because their UI prints "共 N 条" and "第 x / y 页". It is a filtered but non-transactional count: it comes from a separate statement than the page it describes, so a concurrent write can make it disagree with the visible rows by one. Page navigation must therefore driven by `has_next`, never by arithmetic on `total`.
+
+Unpaginated lists (`GET /posts/{post_id}/comments`) still return a bare array on purpose — there is no page to describe.
 
 ### User profile fields
 
@@ -221,7 +237,18 @@ Update all three of: the `Routes:` line at the top, the router wiring in `src/ap
 
 **Where scripts go**
 
-`scripts/` holds project tooling only (currently `dump-schema.mjs`, wired to `npm run schema`). One-off scripts — data seeding, probes, one-time SQL — go under `scripts/agent/` and are never referenced by the build.
+`scripts/` holds project tooling only, each wired to an npm script: `dump-schema.mjs` → `npm run schema`, `new-post.mjs` → `npm run post`. One-off scripts — data seeding, probes, one-time SQL — go under `scripts/agent/` and are never referenced by the build.
+
+**Publishing a blog post**
+
+Put the body in a markdown file, then:
+
+```bash
+npm run post -- --title "标题" --file drafts/xxx.md            # 只生成 SQL
+npm run post -- --title "标题" --file drafts/xxx.md --execute   # 直接写入远端 D1 并回读列表
+```
+
+The tool enforces the two rules that keep getting broken by hand: title ≤ 200 characters (`PostIn.title`), and `'` escaping in `body_md`. It also strips a leading `# H1` from the body, because the detail page already renders the title and a second H1 shows up as a duplicate. `author_id` defaults to 6 (the site author); `created_at` comes from D1's `datetime('now')` unless you pass `--created-at` to backfill an old date. Nothing needs deploying — posts are data, and the API reads D1 directly.
 
 **Things that keep getting re-discovered and should not be re-derived**
 

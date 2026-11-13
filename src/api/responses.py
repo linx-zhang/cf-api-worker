@@ -75,6 +75,17 @@ def success(
     return _envelope(code, detail, jsonable_encoder(data), status_code)
 
 
+def split_page(rows: list[dict], limit: int) -> tuple[list[dict], bool]:
+    """The one paging standard for this API.
+
+    Callers fetch ``limit + 1`` rows; this drops the extra one and reports
+    whether a further page exists. The probe row is fetched from D1 but never
+    serialized, so a page costs a single statement and no wasted payload —
+    never a second COUNT, and never a ``limit + 1`` trick in the client.
+    """
+    return rows[:limit], len(rows) > limit
+
+
 _FIELD_ERRORS = {
     "email": (CODE_INVALID_EMAIL, DETAIL_INVALID_EMAIL),
     "password": (CODE_INVALID_PASSWORD, DETAIL_INVALID_PASSWORD),

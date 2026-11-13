@@ -13,7 +13,7 @@ from api.deps import (
     require_permission,
 )
 from api.models import PostBatchDeleteIn, PostIn, PostOut, PostUpdateIn
-from api.responses import ApiError, success
+from api.responses import ApiError, split_page, success
 from core.constants import (
     CODE_INTERNAL_ERROR,
     CODE_NOT_FOUND,
@@ -113,7 +113,11 @@ async def list_posts(
     author: str | None = Query(None, max_length=64),
     db: Database = Depends(get_db),
 ) -> JSONResponse:
-    """List posts; ``q`` is a fuzzy title filter, ``author`` a fuzzy author filter."""
+    """List posts; ``q`` is a fuzzy title filter, ``author`` a fuzzy author filter.
+
+    Returns ``{items, has_next}`` — see ``split_page`` in ``api/responses.py``
+    for the paging standard.
+    """
     limit, offset = page
     conditions, params = _filter_conditions(q, author)
     where = "".join(f" AND {condition}" for condition in conditions)
@@ -121,9 +125,10 @@ async def list_posts(
         _POST_SELECT
         + where
         + " ORDER BY p.created_at DESC, p.id DESC LIMIT ? OFFSET ?",
-        (*params, limit, offset),
+        (*params, limit + 1, offset),
     )
-    return success([_post_out(post) for post in posts])
+    rows, has_next = split_page(posts, limit)
+    return success({"items": [_post_out(post) for post in rows], "has_next": has_next})
 
 
 @router.get("/{post_id}")
