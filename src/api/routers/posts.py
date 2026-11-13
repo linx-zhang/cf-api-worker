@@ -10,6 +10,7 @@ from api.deps import (
     get_current_user,
     get_db,
     pagination,
+    reject_legacy_paging,
     require_permission,
 )
 from api.models import PostBatchDeleteIn, PostIn, PostOut, PostUpdateIn
@@ -109,6 +110,7 @@ def _filter_conditions(q: str | None, author: str | None) -> tuple[list[str], li
 @router.get("")
 async def list_posts(
     page: tuple[int, int] = Depends(pagination),
+    _legacy: None = Depends(reject_legacy_paging),
     q: str | None = Query(None, max_length=64),
     author: str | None = Query(None, max_length=64),
     db: Database = Depends(get_db),

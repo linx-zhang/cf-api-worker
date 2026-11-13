@@ -107,7 +107,7 @@ Every response, success or failure, looks like:
 
 ### Pagination: one standard
 
-Every paginated list returns **`{items, has_next}`** and takes **`limit` + `offset` only** (`limit` 1-100 default 20, except `/admin/activity` which allows 200 default 50). `page` / `page_size` are not supported.
+Every paginated list returns **`{items, has_next}`** and takes **`limit` + `offset` only** (`limit` 1-100 default 20, one default and one ceiling for the whole API — `/admin/activity` is no exception). `page` / `page_size` / `pageSize` are **rejected with 422** by `reject_legacy_paging()` (`src/api/deps.py`), because they used to be silently ignored: a caller asking `?page=2` got page 1 back and could not tell.
 
 The rule, implemented once in `split_page()` (`src/api/responses.py`):
 
@@ -117,9 +117,12 @@ The rule, implemented once in `split_page()` (`src/api/responses.py`):
 
 Why the server owns the probe: one statement per page (no second COUNT), the probe row is never serialized (no wasted payload, which matters because posts carry their full `body_md`), and every list — blog, admin posts, users, invite codes, activity — behaves identically, so the client has exactly one paging idiom.
 
-`total` is an **optional extra**, returned only by `/admin/users` and `/admin/invite-codes` because their UI prints "共 N 条" and "第 x / y 页". It is a filtered but non-transactional count: it comes from a separate statement than the page it describes, so a concurrent write can make it disagree with the visible rows by one. Page navigation must therefore driven by `has_next`, never by arithmetic on `total`.
+Two deliberate exceptions keep a COUNT:
 
-Unpaginated lists (`GET /posts/{post_id}/comments`) still return a bare array on purpose — there is no page to describe.
+- `/admin/users` and `/admin/invite-codes` return `total`, because their UI prints "共 N 条" and "第 x / y 页". It is a filtered but non-transactional count: it comes from a separate statement than the page it describes, so a concurrent write can make it disagree with the visible rows by one. Page navigation must therefore be driven by `has_next`, never by arithmetic on `total`.
+- `/posts/{post_id}/neighbors` counts the newer posts to put an `index` on the detail page ("第 N 篇"), and only when the list is unfiltered.
+
+Unpaginated lists (`GET /posts/{post_id}/comments`) still return a bare array on purpose — there is no page to describe, and paging a threaded comment tree is a design question, not a `limit` bolted on. It becomes worth doing when a single post carries enough comments that one request is visibly slow.
 
 ### User profile fields
 

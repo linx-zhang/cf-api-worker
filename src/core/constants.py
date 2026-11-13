@@ -96,6 +96,9 @@ DETAIL_INVALID_TIMESTAMP = (
     "timestamp must be an ISO date/datetime or epoch milliseconds: {reason}"
 )
 DETAIL_TIMESTAMP_RANGE = "from must not be later than to"
+DETAIL_LEGACY_PAGING = (
+    "page/page_size are not supported; this API pages with limit/offset"
+)
 DETAIL_ACTIVITY_RATE_LIMITED = (
     "activity was reported too frequently; "
     "at most one batch is accepted per throttle window"

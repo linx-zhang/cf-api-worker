@@ -9,7 +9,9 @@ from api.responses import ApiError
 from core.constants import (
     CODE_FORBIDDEN,
     CODE_UNAUTHORIZED,
+    CODE_VALIDATION_ERROR,
     DETAIL_FORBIDDEN,
+    DETAIL_LEGACY_PAGING,
     DETAIL_UNAUTHORIZED,
 )
 from core.permissions import has_permission
@@ -116,3 +118,20 @@ def pagination(
 ) -> tuple[int, int]:
     """Validate the shared list pagination query parameters."""
     return limit, offset
+
+
+# The paging convention is ``limit``/``offset`` everywhere; these names belong
+# to other APIs and were silently ignored here, which reads as "page 2" while
+# returning page 1. Reject them instead of guessing what the caller meant.
+LEGACY_PAGING_PARAMS = ("page", "page_size", "pageSize")
+
+
+async def reject_legacy_paging(request: Request) -> None:
+    """422 when a caller sends paging parameter names this API never accepted."""
+    if not any(name in request.query_params for name in LEGACY_PAGING_PARAMS):
+        return
+    raise ApiError(
+        CODE_VALIDATION_ERROR,
+        DETAIL_LEGACY_PAGING,
+        status.HTTP_422_UNPROCESSABLE_ENTITY,
+    )

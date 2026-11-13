@@ -8,7 +8,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, Query, status
 from fastapi.responses import JSONResponse
 
-from api.deps import get_db, pagination, require_permission
+from api.deps import get_db, pagination, reject_legacy_paging, require_permission
 from api.models import (
     PROFILE_FIELDS,
     ActivityOut,
@@ -161,6 +161,7 @@ async def list_invite_codes(
     ),
     role: Literal["internal", "admin"] | None = Query(default=None),
     page: tuple[int, int] = Depends(pagination),
+    _legacy: None = Depends(reject_legacy_paging),
     admin: dict = Depends(require_permission(INVITE_CODE_READ_ANY)),
     db: Database = Depends(get_db),
 ) -> JSONResponse:
@@ -203,6 +204,7 @@ async def list_users(
     q: str | None = Query(default=None, max_length=200),
     role: Literal["user", "internal", "admin"] | None = Query(default=None),
     page: tuple[int, int] = Depends(pagination),
+    _legacy: None = Depends(reject_legacy_paging),
     admin: dict = Depends(require_permission(USER_READ_ANY)),
     db: Database = Depends(get_db),
 ) -> JSONResponse:
@@ -384,8 +386,8 @@ async def list_activity(
     ),
     from_: str | None = Query(default=None, alias="from"),
     to: str | None = Query(default=None),
-    limit: int = Query(default=50, ge=1, le=200),
-    offset: int = Query(default=0, ge=0),
+    page: tuple[int, int] = Depends(pagination),
+    _legacy: None = Depends(reject_legacy_paging),
     admin: dict = Depends(require_permission(ACTIVITY_READ_ANY)),
     db: Database = Depends(get_db),
 ) -> JSONResponse:
@@ -394,7 +396,11 @@ async def list_activity(
     No ``total``: a COUNT over the one unbounded table here would cost a second
     round trip on every page, and the only thing the UI needs is "is there a next
     page". So one extra row is fetched and ``has_next`` is derived from it.
+
+    Paging uses the shared ``pagination`` dependency like every other list:
+    one default (20) and one ceiling (100) in the whole API.
     """
+    limit, offset = page
     clauses: list[str] = []
     params: list[object] = []
     if user_id is not None:
