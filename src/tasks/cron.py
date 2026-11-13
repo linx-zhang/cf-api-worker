@@ -9,18 +9,29 @@ from __future__ import annotations
 
 from infra.db import Database
 from tasks.activity_retention import ACTIVITY_RETENTION_DAYS, purge_old_activity
+from tasks.cache_cleanup import purge_expired_cache
 
 
-async def run_cron(env, cron: str = "cron") -> int:
-    """Run all cron jobs; returns the number of ``activity_events`` rows removed.
+async def run_cron(env, cron: str = "cron") -> dict[str, int]:
+    """Run all cron jobs; returns the row count each job removed.
 
     ``env`` is the entrypoint's own environment: the ``env`` argument of the
     runtime's ``scheduled()`` handler is not guaranteed to be populated on
     every invocation.
+
+    Everything is printed, not just returned: the scheduled handler's return
+    value is discarded by the runtime, and Worker logs are the only place a run
+    leaves a trace.
     """
-    deleted = await purge_old_activity(Database(env.DB), days=ACTIVITY_RETENTION_DAYS)
+    db = Database(env.DB)
+
+    deleted = await purge_old_activity(db, days=ACTIVITY_RETENTION_DAYS)
     print(
         f"activity retention ({cron}): "
         f"removed {deleted} rows older than {ACTIVITY_RETENTION_DAYS} days"
     )
-    return deleted
+
+    purged = await purge_expired_cache(db)
+    print(f"cache purge ({cron}): removed {purged} expired entries")
+
+    return {"activity_events": deleted, "cache_entries": purged}

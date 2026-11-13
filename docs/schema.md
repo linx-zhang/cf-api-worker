@@ -5,7 +5,7 @@
 >
 > 为什么用这种生成式文档而不是手写 ORM 模型：项目里没有 ORM，手写模型只能靠记忆维护，会和真实库悄悄对不上；这份文档每次都是从库里读出来的。
 
-共 5 张表：`activity_events`、`comments`、`invite_codes`、`posts`、`users`
+共 6 张表：`activity_events`、`cache_entries`、`comments`、`invite_codes`、`posts`、`users`
 
 ## activity_events
 
@@ -27,6 +27,20 @@
 外键：
 
 - `user_id` → `users.id`
+
+## cache_entries
+
+| 列 | 类型 | 可空 | 默认 | 主键 |
+| --- | --- | --- | --- | --- |
+| `key` | TEXT | 否 |  | 1 |
+| `value` | TEXT | 否 |  |  |
+| `expires_at` | TEXT | 否 |  |  |
+| `created_at` | TEXT | 否 | `datetime('now')` |  |
+| `updated_at` | TEXT | 否 | `datetime('now')` |  |
+
+索引：
+
+- `idx_cache_entries_expires_at`（普通）：`expires_at`
 
 ## comments
 

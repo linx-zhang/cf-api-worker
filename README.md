@@ -55,11 +55,13 @@ src/
     utils.py                email normalization, display name resolution, timestamps
   infra/
     db.py                   D1 wrapper: fetch_one, fetch_all, execute, insert_returning
+    cache.py                D1-backed key/value cache (pickle + base64, Django-shaped API)
     config.py               environment settings (JWT secret, expiry, algorithm)
     passwords.py            WebCrypto-backed password hashing
   tasks/
     cron.py                 cron entry called by entry.py's scheduled()
     activity_retention.py   purge of activity_events older than 30 days
+    cache_cleanup.py        purge of expired cache_entries rows
 migrations/                 numbered SQL migrations applied by wrangler
 ```
 
@@ -180,8 +182,32 @@ D1 binding `DB` -> database `api-worker-db` (see `wrangler.jsonc`). Migrations l
 | `0008_invite_code_note.sql` | `invite_codes.note`, a free-form reminder of who the code was handed to |
 | `0009_token_invalidated_at.sql` | renames `users.password_changed_at` to `token_invalidated_at`; reset and logout both stamp it |
 | `0010_list_order_indexes.sql` | composite `(created_at, id)` indexes so `ORDER BY created_at DESC, id DESC` skips the sort step |
+| `0011_db_cache.sql` | `cache_entries`, the D1-backed key/value cache that `src/infra/cache.py` reads and `run_cron` purges |
 
 Soft deletion is used for users, posts and comments (`deleted_at`); reads filter it out and deleted authors render as `已注销`. Deleting a post also soft deletes its comments.
+
+### Cache: `cache_entries` + `src/infra/cache.py`
+
+One D1 table doubles as the cache store, because a cache that lives in its own service (Workers KV, a Durable Object) would add a second binding, a second consistency model and a second quota to reason about for data that is already derivable from D1. Same API vocabulary as `django.core.cache.backends.db`, so the mental model transfers:
+
+```python
+from infra.cache import Cache
+
+cache = Cache(env.DB)                       # namespace defaults to "default"
+await cache.set("posts:list:v1:20:0", rows, timeout=60)
+await cache.get("posts:list:v1:20:0")       # None when absent or expired
+await cache.get_or_set("k", loader)         # read-through; loader may be async
+await cache.add("k", v)                     # only if absent/expired -> bool
+await cache.delete("k"); await cache.has_key("k"); await cache.get_many(["a", "b"])
+```
+
+Rules that keep this honest:
+
+- `timeout=None` never expires, `timeout=0` deletes instead of storing, negative timeouts are stored already expired. Expiry is computed by SQLite (`datetime('now', ?)`), never from the Worker's own clock.
+- Values are `pickle` blobs, base64-encoded into a TEXT column. Pickle is not a wire format: only unpickle payloads this project wrote, and remember the payload is opaque to SQL — keys are the only handle, so keep them derivable (`"posts:list:v1:20:0"`).
+- Expired rows are invisible to reads, so a missed purge is a latency problem, not a correctness problem; `run_cron` still deletes them nightly (`tasks/cache_cleanup.py`, batched, prints `cache purge (cron): removed N expired entries`).
+- Anything cached must stay droppable: `DELETE FROM cache_entries` at any moment may only cost latency, never data.
+- Cache keys are namespaced (`<namespace>:<key>`), and the namespace is part of the primary key, so two features cannot overwrite each other by accident. `scripts/agent/2026-11-13-cache-smoke.py` exercises the whole surface against an in-memory SQLite database.
 
 ### Table shape for humans and LLMs: `docs/schema.md`
 
@@ -242,6 +268,10 @@ Update all three of: the `Routes:` line at the top, the router wiring in `src/ap
 **Where scripts go**
 
 `scripts/` holds project tooling only, each wired to an npm script: `dump-schema.mjs` → `npm run schema`, `new-post.mjs` → `npm run post`. One-off scripts — data seeding, probes, one-time SQL — go under `scripts/agent/` and are never referenced by the build.
+
+**Adding a cron job**
+
+Wire it in `src/tasks/cron.py` (`run_cron`), keep the job body in its own `src/tasks/<name>.py`, and print one line per run: the scheduled handler's return value is discarded, so Worker logs are the only trace a run leaves. The cron set today is `activity_retention` (30-day window) and `cache_cleanup` (expired `cache_entries`), and `run_cron` returns `{"activity_events": n, "cache_entries": m}`.
 
 **Publishing a blog post**
 
