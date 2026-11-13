@@ -442,3 +442,37 @@ class MemoSummaryOut(BaseModel):
     pending: int
     done: int
     due: int
+
+
+# --- Shared clipboard -------------------------------------------------------
+
+CLIP_BODY_MAX = 20_000
+CLIP_TITLE_MAX = 80
+
+
+class ClipIn(BaseModel):
+    """一段日志或文本；title 只是给收件人看的标签，可以为空。"""
+
+    title: str = Field(default="", max_length=CLIP_TITLE_MAX)
+    body: str = Field(min_length=1, max_length=CLIP_BODY_MAX)
+
+    @field_validator("title")
+    @classmethod
+    def _title(cls, value: str) -> str:
+        return value.strip()
+
+    @field_validator("body")
+    @classmethod
+    def _body(cls, value: str) -> str:
+        # 全是空白的日志没有分享价值；首尾空白保留，缩进本身就是信息
+        if not value.strip():
+            raise ValueError("body must not be blank")
+        return value
+
+
+class ClipOut(BaseModel):
+    code: str
+    title: str = ""
+    body: str
+    created_at: str
+    expires_at: str

@@ -94,6 +94,14 @@ DETAIL_MEMO_NOT_FOUND = "memo not found"
 DETAIL_MEMO_DELETED = "memo deleted"
 DETAIL_MEMO_CREATE_FAILED = "memo was not created"
 
+# Shared clipboard snippets.
+DETAIL_CLIP_CREATED = "clip created"
+DETAIL_CLIP_NOT_FOUND = "clip not found or already expired"
+DETAIL_CLIP_REVOKED = "clip revoked"
+DETAIL_CLIP_RATE_LIMITED = (
+    "a clip was created moments ago; wait before creating another"
+)
+
 # Client activity logging.
 DETAIL_ACTIVITY_RECORDED = "activity recorded"
 DETAIL_INVALID_EVENT_TYPE = (

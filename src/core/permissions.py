@@ -39,6 +39,11 @@ USER_RESET_PASSWORD_ANY = "user:reset_password:any"
 ACTIVITY_WRITE_SELF = "activity:write:self"
 ACTIVITY_READ_ANY = "activity:read:any"
 
+# Shared clipboard snippets: creating one only needs a signed-in user (same
+# shape as /memos), reading is public — the unguessable code is the capability.
+CLIP_DELETE_OWN = "clip:delete:own"
+CLIP_DELETE_ANY = "clip:delete:any"
+
 # Shared by every signed-in role.
 _MEMBER_PERMISSIONS = (
     ACCOUNT_READ_SELF,
@@ -49,6 +54,7 @@ _MEMBER_PERMISSIONS = (
     COMMENT_CREATE_ANY,
     COMMENT_DELETE_OWN,
     ACTIVITY_WRITE_SELF,
+    CLIP_DELETE_OWN,
 )
 
 _ADMIN_PERMISSIONS = (
@@ -63,6 +69,7 @@ _ADMIN_PERMISSIONS = (
     USER_DELETE_ANY,
     USER_RESET_PASSWORD_ANY,
     ACTIVITY_READ_ANY,
+    CLIP_DELETE_ANY,
 )
 
 ROLE_PERMISSIONS: dict[str, tuple[str, ...]] = {
