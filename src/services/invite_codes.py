@@ -1,8 +1,8 @@
-"""Invite-code policy and D1 access shared by the admin API and the CLI script.
+"""Invite-code policy and D1 access shared by the admin API.
 
-Framework-free (no FastAPI): the script imports ``generate_invite_codes`` and
-builds its own ``wrangler d1 execute`` statement, while the router uses the
-async helpers below against the D1 binding.
+Framework-free (no FastAPI): the router imports ``generate_invite_codes`` for
+the code shape and writes rows through the async helpers below, against the D1
+binding.
 """
 
 from __future__ import annotations
@@ -65,20 +65,6 @@ def generate_invite_codes(
         }
         for _ in range(count)
     ]
-
-
-def build_insert_sql(codes: list[dict]) -> str:
-    """Inline INSERT statements for ``wrangler d1 execute`` (CLI only)."""
-    statements = []
-    for item in codes:
-        expiry = "NULL" if item["expires_at"] is None else f"'{item['expires_at']}'"
-        note = item.get("note")
-        note_sql = "NULL" if not note else "'" + note.replace("'", "''") + "'"
-        statements.append(
-            "INSERT INTO invite_codes (code, role, expires_at, note) "
-            f"VALUES ('{item['code']}', '{item['role']}', {expiry}, {note_sql})"
-        )
-    return "; ".join(statements)
 
 
 async def insert_codes(

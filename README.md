@@ -219,6 +219,10 @@ The steps below exist because an LLM's context is finite and gets compacted. `00
 
 Update all three of: the `Routes:` line at the top, the router wiring in `src/api/app.py`, and the permissions table if it is gated.
 
+**Where scripts go**
+
+`scripts/` holds project tooling only (currently `dump-schema.mjs`, wired to `npm run schema`). One-off scripts — data seeding, probes, one-time SQL — go under `scripts/agent/` and are never referenced by the build.
+
 **Things that keep getting re-discovered and should not be re-derived**
 
 - `sqlite_master.sql` holds only the *initial* `CREATE TABLE`; every `ALTER TABLE ... ADD COLUMN` since 0005 is invisible there. Only `PRAGMA table_info` shows the real shape.
