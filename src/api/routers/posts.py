@@ -148,9 +148,10 @@ async def get_post_neighbors(
     """Neighbouring posts in the *currently filtered* list order.
 
     ``prev`` is the newer post (earlier in the list) and ``next`` the older one,
-    matching how the list page reads top to bottom. ``index`` is the 0-based
-    position in the whole list and is only returned when no filter is active —
-    a filtered page number would need its own COUNT over the same predicates.
+    matching how the list page reads top to bottom. Two ``LIMIT 1`` index
+    lookups, no COUNT: the client already knows which page it came from, so
+    "position in the whole list" has no consumer.
+
     When a filter is active and this post itself does not match it, both
     neighbours are null so the detail page hides the navigation instead of
     jumping outside the reader's own result set.
@@ -184,18 +185,8 @@ async def get_post_neighbors(
             is not None
         )
 
-    index: int | None = None
-    if not conditions:
-        counted = await db.fetch_one(
-            "SELECT COUNT(*) AS newer FROM posts WHERE deleted_at IS NULL "
-            "AND (created_at > ? OR (created_at = ? AND id > ?))",
-            (created_at, created_at, pid),
-        )
-        index = int(counted["newer"]) if counted else 0
-
     return success(
         {
-            "index": index,
             "prev": dict(newer) if newer and in_filter else None,
             "next": dict(older) if older and in_filter else None,
         }

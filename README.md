@@ -120,7 +120,8 @@ Why the server owns the probe: one statement per page (no second COUNT), the pro
 Two deliberate exceptions keep a COUNT:
 
 - `/admin/users` and `/admin/invite-codes` return `total`, because their UI prints "共 N 条" and "第 x / y 页". It is a filtered but non-transactional count: it comes from a separate statement than the page it describes, so a concurrent write can make it disagree with the visible rows by one. Page navigation must therefore be driven by `has_next`, never by arithmetic on `total`.
-- `/posts/{post_id}/neighbors` counts the newer posts to put an `index` on the detail page ("第 N 篇"), and only when the list is unfiltered.
+
+`/posts/{post_id}/neighbors` used to be a third one: it counted newer posts to return an `index`, so the detail page could guess which list page the reader came from. That guess was removed — the client carries the source page in router state, which is exact and free. Neighbors is now two `LIMIT 1` lookups and returns `{prev, next}` only.
 
 Unpaginated lists (`GET /posts/{post_id}/comments`) still return a bare array on purpose — there is no page to describe, and paging a threaded comment tree is a design question, not a `limit` bolted on. It becomes worth doing when a single post carries enough comments that one request is visibly slow.
 
