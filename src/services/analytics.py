@@ -109,7 +109,10 @@ async def build_summary(db: Database, days: int) -> dict:
     path_rows = await db.fetch_all(_paths_sql(days), (ANALYTICS_MAX_PATH_ROWS,))
 
     # One row past the cap tells the UI whether the list is truncated.
-    actors, has_next = actor_rows[:ANALYTICS_MAX_ACTORS], len(actor_rows) > ANALYTICS_MAX_ACTORS
+    actors, has_next = (
+        actor_rows[:ANALYTICS_MAX_ACTORS],
+        len(actor_rows) > ANALYTICS_MAX_ACTORS,
+    )
 
     paths_by_ident: dict[str, list[dict]] = {}
     for row in path_rows:
@@ -164,5 +167,7 @@ async def build_summary(db: Database, days: int) -> dict:
 async def load_summary(db: Database, days: int) -> dict:
     """Cache the summary for ``ANALYTICS_CACHE_SECONDS``, then recompute."""
     return await Cache(db).get_or_set(
-        f"analytics:summary:v1:{days}", lambda: build_summary(db, days), ANALYTICS_CACHE_SECONDS
+        f"analytics:summary:v1:{days}",
+        lambda: build_summary(db, days),
+        ANALYTICS_CACHE_SECONDS,
     )

@@ -31,7 +31,7 @@ def _with_geo_headers(request):
     """
     try:
         cf = request.cf
-    except Exception:
+    except Exception:  # noqa: BLE001 - JS interop raises partner-specific errors
         return request.js_object
     if cf is None:
         return request.js_object
@@ -46,7 +46,7 @@ def _with_geo_headers(request):
         init = js.Object.new()
         init.headers = headers
         return js.Request.new(request.js_object, init)
-    except Exception:
+    except Exception:  # noqa: BLE001 - cloning is best-effort, never fatal
         return request.js_object
 
 

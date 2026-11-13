@@ -439,11 +439,15 @@ async def list_activity(
     )
     items, has_next = split_page(rows, limit)
     return success(
-        {"items": [ActivityOut(**row).model_dump() for row in items], "has_next": has_next}
+        {
+            "items": [ActivityOut(**row).model_dump() for row in items],
+            "has_next": has_next,
+        }
     )
 
 
 # --- Activity analytics ----------------------------------------------------
+
 
 @router.get("/analytics/summary")
 async def analytics_summary(

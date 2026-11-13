@@ -12,16 +12,21 @@
 | 列 | 类型 | 可空 | 默认 | 主键 |
 | --- | --- | --- | --- | --- |
 | `id` | INTEGER | 否 |  | 1 |
-| `user_id` | INTEGER | 否 |  |  |
+| `user_id` | INTEGER | 是 |  |  |
 | `type` | TEXT | 否 |  |  |
 | `path` | TEXT | 否 |  |  |
 | `ts` | INTEGER | 否 |  |  |
 | `duration_ms` | INTEGER | 是 |  |  |
+| `ip` | TEXT | 是 |  |  |
+| `country` | TEXT | 是 |  |  |
+| `region` | TEXT | 是 |  |  |
+| `city` | TEXT | 是 |  |  |
 | `created_at` | TEXT | 否 | `datetime('now')` |  |
 
 索引：
 
 - `idx_activity_events_created_id`（普通）：`created_at, id`
+- `idx_activity_events_ip_created`（普通）：`ip, created_at`
 - `idx_activity_events_user_created`（普通）：`user_id, created_at`
 
 外键：

@@ -19,13 +19,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
-from infra.db import Database  # noqa: E402
-from services.analytics import (  # noqa: E402
+from infra.db import Database
+from services.analytics import (
     ANALYTICS_MAX_PATHS_PER_ACTOR,
     build_summary,
     load_summary,
 )
-from services.visitor_paths import is_public_path  # noqa: E402
+from services.visitor_paths import is_public_path
 
 
 class _Statement:
@@ -34,7 +34,7 @@ class _Statement:
         self._sql = sql
         self._params: tuple = ()
 
-    def bind(self, *params) -> "_Statement":
+    def bind(self, *params) -> _Statement:
         self._params = params
         return self
 
@@ -56,7 +56,9 @@ class _Statement:
 class _Result:
     def __init__(self, value):
         self.results = value
-        self.meta = type("Meta", (), {"changes": value if isinstance(value, int) else 0})()
+        self.meta = type(
+            "Meta", (), {"changes": value if isinstance(value, int) else 0}
+        )()
 
 
 class FakeD1:
@@ -83,7 +85,9 @@ def apply_migrations(conn: sqlite3.Connection) -> list[str]:
 
 def _split(sql_text: str) -> list[str]:
     """Split a migration on semicolons, dropping ``--`` comment lines."""
-    lines = [line for line in sql_text.splitlines() if not line.strip().startswith("--")]
+    lines = [
+        line for line in sql_text.splitlines() if not line.strip().startswith("--")
+    ]
     body = "\n".join(lines)
     return [part.strip() for part in body.split(";") if part.strip()]
 
@@ -108,15 +112,92 @@ def seed(conn: sqlite3.Connection) -> None:
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         [
             # Signed-in user: two views, one leave with 5s dwell.
-            (1, "page_view", "/blog/35", 1, None, "1.1.1.1", "CN", "Guangdong", "Shenzhen", now_s),
-            (1, "page_view", "/wiki", 2, None, "1.1.1.1", "CN", "Guangdong", "Shenzhen", now_s),
-            (1, "page_leave", "/wiki", 3, 5000, "1.1.1.1", "CN", "Guangdong", "Shenzhen", now_s),
+            (
+                1,
+                "page_view",
+                "/blog/35",
+                1,
+                None,
+                "1.1.1.1",
+                "CN",
+                "Guangdong",
+                "Shenzhen",
+                now_s,
+            ),
+            (
+                1,
+                "page_view",
+                "/wiki",
+                2,
+                None,
+                "1.1.1.1",
+                "CN",
+                "Guangdong",
+                "Shenzhen",
+                now_s,
+            ),
+            (
+                1,
+                "page_leave",
+                "/wiki",
+                3,
+                5000,
+                "1.1.1.1",
+                "CN",
+                "Guangdong",
+                "Shenzhen",
+                now_s,
+            ),
             # Anonymous visitor: no user row, geo from Cloudflare.
-            (None, "page_view", "/blog", 4, None, "8.8.8.8", "US", "California", "San Jose", now_s),
-            (None, "page_leave", "/blog", 5, 9000, "8.8.8.8", "US", "California", "San Jose", now_s),
-            (None, "page_view", "/blog", 6, None, "8.8.8.8", "US", "California", "San Jose", now_s),
+            (
+                None,
+                "page_view",
+                "/blog",
+                4,
+                None,
+                "8.8.8.8",
+                "US",
+                "California",
+                "San Jose",
+                now_s,
+            ),
+            (
+                None,
+                "page_leave",
+                "/blog",
+                5,
+                9000,
+                "8.8.8.8",
+                "US",
+                "California",
+                "San Jose",
+                now_s,
+            ),
+            (
+                None,
+                "page_view",
+                "/blog",
+                6,
+                None,
+                "8.8.8.8",
+                "US",
+                "California",
+                "San Jose",
+                now_s,
+            ),
             # Anonymous, same ip, older day: same actor, not a new one.
-            (None, "page_view", "/wiki/docs/start", 7, None, "8.8.8.8", None, None, None, yesterday),
+            (
+                None,
+                "page_view",
+                "/wiki/docs/start",
+                7,
+                None,
+                "8.8.8.8",
+                None,
+                None,
+                None,
+                yesterday,
+            ),
             # An event with neither identity (should be ignored everywhere).
             (None, "page_view", "/blog", 8, None, None, None, None, None, now_s),
         ],
@@ -184,7 +265,15 @@ async def main() -> None:
 
     # Visitor path rules.
     allowed = ["/", "/blog", "/blog/35", "/blog?page=2", "/wiki/docs/start"]
-    blocked = ["/admin", "/admin?tab=users", "/blogger", "/wiki2", "/.env", "/wp-login.php", ""]
+    blocked = [
+        "/admin",
+        "/admin?tab=users",
+        "/blogger",
+        "/wiki2",
+        "/.env",
+        "/wp-login.php",
+        "",
+    ]
     for path in allowed:
         assert is_public_path(path), path
     for path in blocked:
@@ -192,7 +281,9 @@ async def main() -> None:
 
     print(f"today: {today}")
     print(f"actors: {[(a['key'], a['page_views'], a['dwell_ms']) for a in actors]}")
-    print(f"series: {[(d['date'], d['page_views'], d['actors']) for d in summary['series']]}")
+    print(
+        f"series: {[(d['date'], d['page_views'], d['actors']) for d in summary['series']]}"
+    )
     print("analytics smoke test: OK")
 
 

@@ -23,7 +23,9 @@ from api.models import ActivityBatchIn, AnonymousActivityBatchIn
 from api.responses import ApiError, success
 from core.constants import (
     CODE_INVALID_ACTIVITY_PATH,
+    CODE_INVALID_CLIENT_ADDRESS,
     CODE_RATE_LIMITED,
+    DETAIL_ACTIVITY_ADDRESS_MISSING,
     DETAIL_ACTIVITY_PATH_REJECTED,
     DETAIL_ACTIVITY_RATE_LIMITED,
     DETAIL_ACTIVITY_RECORDED,
@@ -78,18 +80,20 @@ def _network_context(request: Request) -> dict[str, str | None]:
     Cloudflare's own header and stays as the fallback for country.
     """
     country = (
-        request.headers.get("x-cf-country")
-        or request.headers.get("cf-ipcountry")
-        or ""
-    ).strip().upper()
+        (
+            request.headers.get("x-cf-country")
+            or request.headers.get("cf-ipcountry")
+            or ""
+        )
+        .strip()
+        .upper()
+    )
     return {
         "ip": _client_ip(request),
         "country": None if country in _UNKNOWN_COUNTRIES else country[:2],
         "region": (request.headers.get("x-cf-region") or "").strip() or None,
         "city": (request.headers.get("x-cf-city") or "").strip() or None,
     }
-
-
 
 
 async def _seconds_since_last_batch(
@@ -199,8 +203,8 @@ async def record_visitor_activity(
     ip = context["ip"]
     if ip is None:
         raise ApiError(
-            CODE_INVALID_ACTIVITY_PATH,
-            DETAIL_ACTIVITY_PATH_REJECTED,
+            CODE_INVALID_CLIENT_ADDRESS,
+            DETAIL_ACTIVITY_ADDRESS_MISSING,
             status.HTTP_422_UNPROCESSABLE_ENTITY,
         )
 

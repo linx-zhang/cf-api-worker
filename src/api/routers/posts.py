@@ -87,7 +87,9 @@ async def _soft_delete_posts(
 _POST_LIST_FILTERS = "SELECT p.id, p.title FROM posts p JOIN users u ON u.id = p.author_id WHERE p.deleted_at IS NULL"
 
 
-def _filter_conditions(q: str | None, author: str | None) -> tuple[list[str], list[object]]:
+def _filter_conditions(
+    q: str | None, author: str | None
+) -> tuple[list[str], list[object]]:
     """Shared ``q`` / ``author`` predicates so list and neighbours never drift."""
     conditions: list[str] = []
     params: list[object] = []
@@ -181,7 +183,9 @@ async def get_post_neighbors(
     in_filter = True
     if conditions:
         in_filter = (
-            await db.fetch_one(_POST_LIST_FILTERS + where + " AND p.id = ?", (*filter_params, pid))
+            await db.fetch_one(
+                _POST_LIST_FILTERS + where + " AND p.id = ?", (*filter_params, pid)
+            )
             is not None
         )
 
