@@ -39,6 +39,24 @@ def get_db(request: Request) -> Database:
     return Database(request.scope["env"].DB)
 
 
+def client_ip(request: Request) -> str | None:
+    """Best-effort client ip, most trustworthy header first.
+
+    Cloudflare sets ``cf-connecting-ip`` itself; the other headers only matter
+    when the worker is reached through another proxy (local dev, Pages).
+    """
+    for header in ("cf-connecting-ip", "x-real-ip"):
+        value = request.headers.get(header)
+        if value and value.strip():
+            return value.strip()
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        first = forwarded.split(",", 1)[0].strip()
+        if first:
+            return first
+    return None
+
+
 def _bearer_token(request: Request) -> str:
     header = request.headers.get("authorization", "")
     scheme, _, token = header.partition(" ")

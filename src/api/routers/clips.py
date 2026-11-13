@@ -23,10 +23,15 @@ import re
 from datetime import timedelta
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Request, status
 from fastapi.responses import JSONResponse
 
-from api.deps import ensure_resource_permission, get_current_user, get_db
+from api.deps import (
+    client_ip,
+    ensure_resource_permission,
+    get_current_user,
+    get_db,
+)
 from api.models import ClipIn, ClipOut
 from api.responses import ApiError, success
 from core.constants import (
@@ -35,6 +40,7 @@ from core.constants import (
     DETAIL_CLIP_CREATED,
     DETAIL_CLIP_NOT_FOUND,
     DETAIL_CLIP_RATE_LIMITED,
+    DETAIL_CLIP_READ_RATE_LIMITED,
     DETAIL_CLIP_REVOKED,
 )
 from core.permissions import CLIP_DELETE_ANY, CLIP_DELETE_OWN
@@ -51,6 +57,15 @@ CLIP_TTL_SECONDS = 24 * 60 * 60
 # One snippet per user per 10 seconds; the same shape as the activity throttle,
 # but kept in the cache because a clip leaves no row to read a timestamp from.
 CLIP_THROTTLE_SECONDS = 10
+
+# Reads are public, so they need their own budget: one per-ip bucket and one
+# per-code bucket, counted in fixed one-minute windows. The per-code limit is
+# the one that always applies — a code that leaks into a busy group chat may
+# see several readers at once, and a scraper hammering a single link should not
+# be able to turn it into free bandwidth.
+CLIP_READ_WINDOW_SECONDS = 60
+CLIP_READ_IP_LIMIT = 60
+CLIP_READ_CODE_LIMIT = 120
 
 # uuid4 hex: 32 chars, version nibble at index 12, variant nibble at index 16.
 _CODE_RE = re.compile(r"^[0-9a-f]{32}$")
@@ -82,6 +97,37 @@ def _clip_out(code: str, value: dict) -> dict:
         created_at=value.get("created_at", ""),
         expires_at=value.get("expires_at", ""),
     ).model_dump()
+
+
+def _read_window() -> tuple[str, int]:
+    """Current fixed window id plus the seconds left in it."""
+    now = int(utc_now().timestamp())
+    stamp = now // CLIP_READ_WINDOW_SECONDS
+    remaining = CLIP_READ_WINDOW_SECONDS - now % CLIP_READ_WINDOW_SECONDS
+    return str(stamp), remaining + 1
+
+
+async def _take(cache: Cache, key: str, limit: int, ttl: int) -> bool:
+    """Count one hit against a fixed window; ``False`` means over budget.
+
+    Read-modify-write, not atomic: two simultaneous requests may both read the
+    old count. That is acceptable here — the purpose is to stop a loop, not to
+    bill anyone to the request.
+    """
+    used = await cache.get(key, 0) or 0
+    if used >= limit:
+        return False
+    await cache.set(key, used + 1, timeout=ttl)
+    return True
+
+
+def _read_limited(retry_after: int) -> ApiError:
+    return ApiError(
+        CODE_RATE_LIMITED,
+        DETAIL_CLIP_READ_RATE_LIMITED,
+        status.HTTP_429_TOO_MANY_REQUESTS,
+        headers={"Retry-After": str(retry_after)},
+    )
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -123,11 +169,25 @@ async def create_clip(
 @router.get("/{code}")
 async def read_clip(
     code: str,
+    request: Request,
     db: Database = Depends(get_db),
 ) -> JSONResponse:
     """Public read: anyone with the code can open the snippet until it expires."""
     checked = _checked_code(code)
-    value = await _cache(db).get(checked)
+    cache = _cache(db)
+    window, ttl = _read_window()
+
+    ip = client_ip(request)
+    if ip is not None and not await _take(
+        cache, f"read:ip:{ip}:{window}", CLIP_READ_IP_LIMIT, ttl
+    ):
+        raise _read_limited(ttl)
+    if not await _take(
+        cache, f"read:code:{checked}:{window}", CLIP_READ_CODE_LIMIT, ttl
+    ):
+        raise _read_limited(ttl)
+
+    value = await cache.get(checked)
     if value is None:
         raise ApiError(CODE_NOT_FOUND, DETAIL_CLIP_NOT_FOUND, status.HTTP_404_NOT_FOUND)
     return success(_clip_out(checked, value))

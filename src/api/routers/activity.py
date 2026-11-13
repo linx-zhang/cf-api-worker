@@ -18,7 +18,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Request, status
 from fastapi.responses import JSONResponse
 
-from api.deps import get_db, require_permission
+from api.deps import client_ip, get_db, require_permission
 from api.models import ActivityBatchIn, AnonymousActivityBatchIn
 from api.responses import ApiError, success
 from core.constants import (
@@ -58,20 +58,6 @@ VISITOR_RATE_LIMIT_SECONDS = 30
 _UNKNOWN_COUNTRIES = frozenset({"", "XX", "T1"})
 
 
-def _client_ip(request: Request) -> str | None:
-    """Best-effort client ip, most trustworthy header first."""
-    for header in ("cf-connecting-ip", "x-real-ip"):
-        value = request.headers.get(header)
-        if value and value.strip():
-            return value.strip()
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        first = forwarded.split(",", 1)[0].strip()
-        if first:
-            return first
-    return None
-
-
 def _network_context(request: Request) -> dict[str, str | None]:
     """ip + geo as seen by Cloudflare for this request.
 
@@ -89,7 +75,7 @@ def _network_context(request: Request) -> dict[str, str | None]:
         .upper()
     )
     return {
-        "ip": _client_ip(request),
+        "ip": client_ip(request),
         "country": None if country in _UNKNOWN_COUNTRIES else country[:2],
         "region": (request.headers.get("x-cf-region") or "").strip() or None,
         "city": (request.headers.get("x-cf-city") or "").strip() or None,

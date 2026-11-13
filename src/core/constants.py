@@ -101,6 +101,7 @@ DETAIL_CLIP_REVOKED = "clip revoked"
 DETAIL_CLIP_RATE_LIMITED = (
     "a clip was created moments ago; wait before creating another"
 )
+DETAIL_CLIP_READ_RATE_LIMITED = "too many reads of a shared clip; try again shortly"
 
 # Client activity logging.
 DETAIL_ACTIVITY_RECORDED = "activity recorded"
