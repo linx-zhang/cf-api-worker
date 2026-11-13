@@ -5,7 +5,7 @@
 >
 > 为什么用这种生成式文档而不是手写 ORM 模型：项目里没有 ORM，手写模型只能靠记忆维护，会和真实库悄悄对不上；这份文档每次都是从库里读出来的。
 
-共 6 张表：`activity_events`、`cache_entries`、`comments`、`invite_codes`、`posts`、`users`
+共 7 张表：`activity_events`、`cache_entries`、`comments`、`invite_codes`、`memos`、`posts`、`users`
 
 ## activity_events
 
@@ -92,6 +92,29 @@
 
 - `created_by` → `users.id`
 - `used_by` → `users.id`
+
+## memos
+
+| 列 | 类型 | 可空 | 默认 | 主键 |
+| --- | --- | --- | --- | --- |
+| `id` | INTEGER | 否 |  | 1 |
+| `user_id` | INTEGER | 否 |  |  |
+| `body` | TEXT | 否 |  |  |
+| `done` | INTEGER | 否 | `0` |  |
+| `done_at` | TEXT | 是 |  |  |
+| `due_at` | TEXT | 是 |  |  |
+| `created_at` | TEXT | 否 | `datetime('now')` |  |
+| `updated_at` | TEXT | 否 | `datetime('now')` |  |
+| `deleted_at` | TEXT | 是 |  |  |
+
+索引：
+
+- `idx_memos_user_created`（普通）：`user_id, created_at, id`
+- `idx_memos_user_done`（普通）：`user_id, done, created_at`
+
+外键：
+
+- `user_id` → `users.id`
 
 ## posts
 

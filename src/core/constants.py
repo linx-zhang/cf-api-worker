@@ -89,6 +89,11 @@ DETAIL_PASSWORD_RESET = (
 # Author display for soft-deleted accounts.
 DELETED_AUTHOR_NAME = "已注销"
 
+# Personal-space memos.
+DETAIL_MEMO_NOT_FOUND = "memo not found"
+DETAIL_MEMO_DELETED = "memo deleted"
+DETAIL_MEMO_CREATE_FAILED = "memo was not created"
+
 # Client activity logging.
 DETAIL_ACTIVITY_RECORDED = "activity recorded"
 DETAIL_INVALID_EVENT_TYPE = (

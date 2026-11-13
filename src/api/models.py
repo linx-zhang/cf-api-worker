@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import re
 import time
+from datetime import datetime
 from typing import Literal
 
 from pydantic import (
@@ -349,3 +351,94 @@ class InviteCodeOut(BaseModel):
     note: str | None = None
     used_by: int | None = None
     used_by_email: str | None = None
+
+
+# --- Personal-space memos ---------------------------------------------------
+
+# 到期日只有"天"，没有时刻和时区：存 YYYY-MM-DD，客户端按本地日期解释。
+_MEMO_DUE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+MEMO_BODY_MAX = 2000
+
+
+def _check_due_at(value: str | None) -> str | None:
+    """Validate a memo due date; blank clears it, anything else must be a real day."""
+    if value is None:
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    if not _MEMO_DUE_PATTERN.match(text):
+        raise ValueError("due_at must be a date in YYYY-MM-DD form")
+    try:
+        # 正则挡不住 2026-02-30 这种"格式对、日期不存在"的值
+        datetime.strptime(text, "%Y-%m-%d")
+    except ValueError:
+        raise ValueError("due_at must be a real calendar date") from None
+    return text
+
+
+def _check_memo_body(value: str) -> str:
+    text = value.strip()
+    if not text:
+        raise ValueError("body must not be blank")
+    return text
+
+
+class MemoIn(BaseModel):
+    body: str = Field(min_length=1, max_length=MEMO_BODY_MAX)
+    due_at: str | None = None
+
+    @field_validator("body")
+    @classmethod
+    def _body(cls, value: str) -> str:
+        return _check_memo_body(value)
+
+    @field_validator("due_at")
+    @classmethod
+    def _due_at(cls, value: str | None) -> str | None:
+        return _check_due_at(value)
+
+
+class MemoUpdateIn(BaseModel):
+    """PATCH 允许只改一个字段；``due_at: null`` 表示清空到期日。"""
+
+    body: str | None = Field(default=None, min_length=1, max_length=MEMO_BODY_MAX)
+    done: bool | None = None
+    due_at: str | None = None
+
+    @field_validator("body")
+    @classmethod
+    def _body(cls, value: str | None) -> str | None:
+        return None if value is None else _check_memo_body(value)
+
+    @field_validator("due_at")
+    @classmethod
+    def _due_at(cls, value: str | None) -> str | None:
+        return _check_due_at(value)
+
+    @model_validator(mode="after")
+    def _at_least_one_field(self) -> MemoUpdateIn:
+        if not self.model_fields_set:
+            raise ValueError("at least one of body, done or due_at is required")
+        return self
+
+
+class MemoOut(BaseModel):
+    id: int
+    body: str
+    done: bool
+    done_at: str | None = None
+    due_at: str | None = None
+    created_at: str
+    updated_at: str
+
+
+class MemoSummaryOut(BaseModel):
+    """个人空间的计数：列表本身走 limit/offset，不在分页接口里塞 total。
+
+    ``due`` 只数"未完成且到期日不晚于今天"（含逾期），因为界面上标红的就是这批。
+    """
+
+    pending: int
+    done: int
+    due: int
