@@ -20,7 +20,7 @@ uuid4 hex code. Two guards keep a forged code from reaching another key:
 from __future__ import annotations
 
 import re
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, status
@@ -38,6 +38,7 @@ from core.constants import (
     DETAIL_CLIP_REVOKED,
 )
 from core.permissions import CLIP_DELETE_ANY, CLIP_DELETE_OWN
+from core.utils import sqlite_timestamp, utc_now
 from infra.cache import Cache
 from infra.db import Database
 
@@ -54,8 +55,6 @@ CLIP_THROTTLE_SECONDS = 10
 # uuid4 hex: 32 chars, version nibble at index 12, variant nibble at index 16.
 _CODE_RE = re.compile(r"^[0-9a-f]{32}$")
 _VARIANT_NIBBLES = frozenset("89ab")
-
-_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 
 def _cache(db: Database) -> Cache:
@@ -104,14 +103,14 @@ async def create_clip(
         )
 
     code = uuid4().hex
-    created = datetime.now(UTC)
+    created = utc_now()
     expires = created + timedelta(seconds=CLIP_TTL_SECONDS)
     value = {
         "title": payload.title,
         "body": payload.body,
         "owner_id": user["id"],
-        "created_at": created.strftime(_TIME_FORMAT),
-        "expires_at": expires.strftime(_TIME_FORMAT),
+        "created_at": sqlite_timestamp(created),
+        "expires_at": sqlite_timestamp(expires),
     }
     await cache.set(code, value, CLIP_TTL_SECONDS)
     return success(
