@@ -13,6 +13,7 @@ from api.models import (
     PROFILE_FIELDS,
     ActivityOut,
     AdminUserOut,
+    AnalyticsSummaryOut,
     InviteCodeCreateIn,
     InviteCodeOut,
     UserPasswordResetIn,
@@ -55,6 +56,7 @@ from core.permissions import (
 from core.utils import sqlite_timestamp
 from infra.db import Database
 from infra.passwords import generate_temporary_password, hash_password
+from services.analytics import load_summary
 from services.invite_codes import (
     delete_unused,
     generate_invite_codes,
@@ -426,10 +428,12 @@ async def list_activity(
     where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
 
     # Fetch one row past the page: its presence is the only signal the UI needs.
+    # LEFT JOIN: an anonymous visitor has no user row, and dropping those events
+    # from the log would hide exactly the traffic this page exists to show.
     rows = await db.fetch_all(
         "SELECT e.id, e.user_id, u.email AS user_email, e.type, e.path, e.ts, "
-        "e.duration_ms, e.created_at FROM activity_events e "
-        f"JOIN users u ON u.id = e.user_id{where} "
+        "e.duration_ms, e.ip, e.country, e.created_at FROM activity_events e "
+        f"LEFT JOIN users u ON u.id = e.user_id{where} "
         "ORDER BY e.created_at DESC, e.id DESC LIMIT ? OFFSET ?",
         [*params, limit + 1, offset],
     )
@@ -437,3 +441,23 @@ async def list_activity(
     return success(
         {"items": [ActivityOut(**row).model_dump() for row in items], "has_next": has_next}
     )
+
+
+# --- Activity analytics ----------------------------------------------------
+
+@router.get("/analytics/summary")
+async def analytics_summary(
+    days: int = Query(default=7, ge=1, le=90),
+    admin: dict = Depends(require_permission(ACTIVITY_READ_ANY)),
+    db: Database = Depends(get_db),
+) -> JSONResponse:
+    """Activity overview: today's numbers, a daily series, per-identity detail.
+
+    All SQL lives in ``services/analytics.py`` so it can be exercised without
+    FastAPI; this route only adds the permission check, the shared cache and the
+    response model. An identity is ``u:<id>`` (signed in) or ``ip:<addr>``
+    (anonymous): nothing links the two, so a visitor who signs in appears as
+    both instead of being guessed into one.
+    """
+    summary = await load_summary(db, days)
+    return success(AnalyticsSummaryOut(**summary).model_dump())

@@ -98,6 +98,7 @@ Every response, success or failure, looks like:
 | POST | `/posts/{post_id}/comments` | `comment:create:any` | `parent_id` must belong to the same post |
 | DELETE | `/comments/{comment_id}` | own or `comment:delete:any` | soft deletes the reply subtree |
 | POST | `/activity` | `activity:write:self` | 1-50 events per batch, throttled (see below) |
+| POST | `/activity/visitor` | public | anonymous visitors: 1-20 events, `page_view`/`page_leave` only, public paths only, throttled by ip (see below) |
 | POST | `/admin/invite-codes` | `invite_code:create:any` | role `internal` or `admin`; optional `note` (max 64) records who the code was handed to |
 | GET | `/admin/invite-codes` | `invite_code:read:any` | filters `status`, `role`, pagination; each item carries `note` and `used_by_email` (`null` until someone registers with it) |
 | DELETE | `/admin/invite-codes/{code}` | `invite_code:delete:any` | unused codes only |
@@ -105,7 +106,8 @@ Every response, success or failure, looks like:
 | PATCH | `/admin/users/{user_id}` | `user:update:any` | email, role and/or profile fields |
 | POST | `/admin/users/{user_id}/reset-password` | `user:reset_password:any` | body `{password?}`; generates one when omitted, kills older tokens |
 | DELETE | `/admin/users/{user_id}` | `user:delete:any` | soft delete; last admin and self are protected |
-| GET | `/admin/activity` | `activity:read:any` | filters `user_id`, `type`, `from`, `to`; `limit` (1-200, default 50) + `offset`; returns `{items, has_next}` — no `total`, see the pagination note below |
+| GET | `/admin/activity` | `activity:read:any` | filters `user_id`, `type`, `from`, `to`; `limit` (1-200, default 50) + `offset`; returns `{items, has_next}` — no `total`, see the pagination note below; `user_id`/`user_email` are `null` for anonymous rows |
+| GET | `/admin/analytics/summary` | `activity:read:any` | `days` (1-90, default 7); today counters, daily series and per-identity detail; cached 60s (see below) |
 
 ### Pagination: one standard
 
@@ -151,6 +153,28 @@ The same request stamps `users.token_invalidated_at`. `get_current_user` compare
 
 Writes are throttled to one batch per user per 10 seconds. The check reads the newest stored batch timestamp from D1, so the window is shared by every isolate; rejected batches perform no writes and return `429` with `rate_limited` and a `Retry-After` header. A batch containing `page_leave` always passes, because it carries the only `duration_ms` value.
 
+### Anonymous visitors, ip and geo
+
+The signed-in endpoint can only describe people who have an account, which for this site means its owner and a few test accounts. `POST /activity/visitor` is the missing half: no authentication, 1-20 events, `page_view`/`page_leave` only, and only for public content paths (`/`, `/blog*`, `/wiki*` — `services/visitor_paths.py`). Rejections happen before any write.
+
+Why these limits rather than a WAF rule: the endpoint must stay open to record a real reader, so the cheapest defence that still records a visit faithfully is the batch ceiling, the public-path allow list and an ip throttle of 30 seconds (`WHERE ip = ?` on the newest row, same trick as the per-user throttle). `page_leave` always passes for the same reason it does on the signed-in path: it carries the only `duration_ms`. Anonymous heartbeats are rejected at validation, because one heartbeat per visitor per minute would outnumber the page views it is meant to explain.
+
+Every event — signed-in or anonymous — stores the network context seen at request time: `ip`, `country`, `region`, `city`. Country comes from Cloudflare's `cf-ipcountry` header; city and region exist only inside `request.cf`, which `workers.asgi` does not forward into the ASGI scope, so `src/entry.py` re-emits the request with `x-cf-country` / `x-cf-region` / `x-cf-city` / `x-cf-colo` headers. That clone is wrapped in `try/except` and falls back to the untouched request: if it ever fails, country still arrives and city/region are simply absent. Nothing is reverse-geocoded later — the answer that matters is where the request was seen from.
+
+`activity_events.user_id` is therefore nullable. SQLite cannot drop `NOT NULL`, so `0012` rebuilds the table (create → copy → drop → rename → recreate three indexes); historical rows keep `NULL` geo because that data never existed and inventing it would be worse than a gap.
+
+### Activity analytics: `GET /admin/analytics/summary`
+
+One request returns three things: today's counters (`new_users`, `active_users`, `anonymous_visitors`, `page_views`), a daily series, and per-identity detail. All SQL lives in `src/services/analytics.py`, free of FastAPI/pydantic imports, so `scripts/agent/2026-11-13-analytics-smoke.py` runs it against an in-memory SQLite database with every migration applied.
+
+An **actor** is `u:<id>` (signed in) or `ip:<address>` (anonymous). Nothing links those two rows: a visitor who signs in legitimately appears twice rather than being guessed into one identity.
+
+Two numbers need their meaning stated, because both are easy to misread:
+
+- `dwell_ms` is the sum of `duration_ms` from `page_leave`. It is observed time, not wall-clock: a tab killed without `pagehide` sends no leave event and contributes nothing.
+- Dates are bucketed with `+8 hours` (`ANALYTICS_TZ_OFFSET_HOURS`), because every stored timestamp is UTC and "today" here means Beijing time. Without the shift every daily number would be 8 hours off.
+
+The payload is cached for 60 seconds (`Cache`, key `analytics:summary:v1:<days>`), capped at 60 actors and 8 pages per actor, and reports `has_next` when more identities exist than were returned.
 Rows are not kept forever: a Cron Trigger (`15 18 * * *` UTC, configured under `triggers.crons` in `wrangler.jsonc`) calls `scheduled()` in `src/entry.py` (the method name is fixed by the Workers runtime, like `fetch()`), which delegates one line to `run_cron()` in `src/tasks/cron.py`; that runs the daily `activity_events` purge and deletes rows whose server receive time (`created_at`) is older than 30 days. Deletion runs in batches of 5000 (`src/tasks/activity_retention.py`) so one statement never has to carry a full sweep, and age is measured on `created_at` rather than the client-supplied `ts`.
 
 Because the purge deletes rows, "last active" is cached on `users.last_active_at` instead of being derived from `activity_events`: every accepted batch runs one `UPDATE ... MAX(...)` on the user row, so the value only moves forward, and `/admin/users` reads the column directly (no per-user subquery over the activity table). Deleting old events therefore never makes a dormant account look like it was never active.
@@ -183,6 +207,7 @@ D1 binding `DB` -> database `api-worker-db` (see `wrangler.jsonc`). Migrations l
 | `0009_token_invalidated_at.sql` | renames `users.password_changed_at` to `token_invalidated_at`; reset and logout both stamp it |
 | `0010_list_order_indexes.sql` | composite `(created_at, id)` indexes so `ORDER BY created_at DESC, id DESC` skips the sort step |
 | `0011_db_cache.sql` | `cache_entries`, the D1-backed key/value cache that `src/infra/cache.py` reads and `run_cron` purges |
+| `0012_activity_anonymous.sql` | rebuilds `activity_events`: `user_id` nullable (anonymous visitors), adds `ip`, `country`, `region`, `city`, adds the `(ip, created_at)` throttle index |
 
 Soft deletion is used for users, posts and comments (`deleted_at`); reads filter it out and deleted authors render as `已注销`. Deleting a post also soft deletes its comments.
 

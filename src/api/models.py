@@ -22,6 +22,18 @@ ACTIVITY_TS_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000
 ACTIVITY_TS_FUTURE_TOLERANCE_MS = 5 * 60 * 1000
 
 
+def _check_activity_ts(value: int) -> int:
+    """Client clock sanity check shared by signed-in and anonymous events."""
+    now_ms = int(time.time() * 1000)
+    if value < now_ms - ACTIVITY_TS_MAX_AGE_MS:
+        raise ValueError("ts must be epoch milliseconds within the last 30 days")
+    if value > now_ms + ACTIVITY_TS_FUTURE_TOLERANCE_MS:
+        raise ValueError(
+            "ts must be epoch milliseconds no more than 5 minutes in the future"
+        )
+    return value
+
+
 class RegisterIn(BaseModel):
     email: str
     password: str = Field(min_length=8, max_length=128)
@@ -220,29 +232,95 @@ class ActivityEventIn(BaseModel):
     @field_validator("ts")
     @classmethod
     def _ts_range(cls, value: int) -> int:
-        now_ms = int(time.time() * 1000)
-        if value < now_ms - ACTIVITY_TS_MAX_AGE_MS:
-            raise ValueError("ts must be epoch milliseconds within the last 30 days")
-        if value > now_ms + ACTIVITY_TS_FUTURE_TOLERANCE_MS:
-            raise ValueError(
-                "ts must be epoch milliseconds no more than 5 minutes in the future"
-            )
-        return value
+        return _check_activity_ts(value)
 
 
 class ActivityBatchIn(BaseModel):
     events: list[ActivityEventIn] = Field(min_length=1, max_length=50)
 
 
+class AnonymousActivityEventIn(BaseModel):
+    """One event from a visitor without an account.
+
+    ``heartbeat`` is excluded on purpose: a signed-in user is one row stream we
+    can afford, but every anonymous visitor sending a heartbeat every 60s would
+    dominate the table and bury the page views it is supposed to explain.
+    """
+
+    type: Literal["page_view", "page_leave"]
+    path: str = Field(min_length=1, max_length=512)
+    ts: int
+    duration_ms: int | None = Field(default=None, ge=0)
+
+    @field_validator("ts")
+    @classmethod
+    def _ts_range(cls, value: int) -> int:
+        return _check_activity_ts(value)
+
+
+class AnonymousActivityBatchIn(BaseModel):
+    events: list[AnonymousActivityEventIn] = Field(min_length=1, max_length=20)
+
+
 class ActivityOut(BaseModel):
     id: int
-    user_id: int
-    user_email: str
+    # NULL user_id is an anonymous visitor; ``ip`` is then the only handle.
+    user_id: int | None = None
+    user_email: str | None = None
     type: str
     path: str
     ts: int
     duration_ms: int | None = None
+    ip: str | None = None
+    country: str | None = None
     created_at: str
+
+
+class AnalyticsTodayOut(BaseModel):
+    new_users: int
+    active_users: int
+    anonymous_visitors: int
+    page_views: int
+
+
+class AnalyticsDayOut(BaseModel):
+    date: str
+    page_views: int
+    actors: int
+
+
+class AnalyticsPathOut(BaseModel):
+    path: str
+    views: int
+    dwell_ms: int
+
+
+class AnalyticsActorOut(BaseModel):
+    """One identity seen in the window: a signed-in user, or an anonymous IP."""
+
+    key: str
+    user_id: int | None = None
+    user_email: str | None = None
+    ip: str | None = None
+    country: str | None = None
+    region: str | None = None
+    city: str | None = None
+    page_views: int
+    dwell_ms: int
+    last_seen: str
+    first_seen: str
+    paths: list[AnalyticsPathOut] = Field(default_factory=list)
+
+
+class AnalyticsSummaryOut(BaseModel):
+    days: int
+    timezone_offset_hours: int
+    today: AnalyticsTodayOut
+    series: list[AnalyticsDayOut]
+    actors: list[AnalyticsActorOut]
+    # More identities exist than were returned; the UI says so instead of
+    # pretending the list is complete.
+    has_next: bool = False
 
 
 class InviteCodeCreateIn(BaseModel):
