@@ -5,7 +5,8 @@
   "scripts": {
     "deploy": "uv run pywrangler deploy",
     "dev": "uv run pywrangler dev",
-    "start": "uv run pywrangler dev"
+    "start": "uv run pywrangler dev",
+    "schema": "node scripts/dump-schema.mjs"
   },
   "devDependencies": {
     "wrangler": "^4.158.0"

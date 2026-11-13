@@ -5,7 +5,9 @@ Layout: src/entry.py (Worker entry, Default entrypoint exported for wrangler) ->
 Envelope: every response is {"code": str, "detail": str, "data": any}; errors are raised as ApiError(code, detail, status) and rendered by handlers in api/responses.py (422 RequestValidationError, 404 not_found, 405 method_not_allowed, 500 internal_error).
 Routes: GET /; POST /auth/register; POST /auth/login; GET /auth/me; PATCH /auth/me; GET /posts; GET /posts/{post_id}; POST /posts; POST /posts/batch-delete; PATCH /posts/{post_id}; DELETE /posts/{post_id}; GET /posts/{post_id}/comments; POST /posts/{post_id}/comments; DELETE /comments/{comment_id}; POST /activity; POST|GET /admin/invite-codes; DELETE /admin/invite-codes/{code}; GET /admin/users; PATCH /admin/users/{user_id}; POST /admin/users/{user_id}/reset-password; DELETE /admin/users/{user_id}; GET /admin/activity.
 Permissions (resource:action:scope): user and internal both hold account:read:self, account:update:self, post:create:any, post:update:own, post:delete:own, comment:create:any, comment:delete:own, activity:write:self. admin holds those plus post:update:any, post:delete:any, comment:delete:any, invite_code:create:any, invite_code:read:any, invite_code:delete:any, user:read:any, user:update:any, user:delete:any, user:reset_password:any, activity:read:any. PUBLIC (never returned to clients) covers post:read:any and comment:read:any.
-Migrations (migrations/, applied in filename order via wrangler d1 migrations apply): 0001_init.sql, 0002_invite_codes_created_by.sql, 0003_user_soft_delete.sql, 0004_activity_events.sql, 0005_user_profile.sql, 0006_user_password_reset.sql, 0007_user_last_active.sql.
+Migrations (migrations/, applied in filename order via wrangler d1 migrations apply): 0001_init.sql, 0002_invite_codes_created_by.sql, 0003_user_soft_delete.sql, 0004_activity_events.sql, 0005_user_profile.sql, 0006_user_password_reset.sql, 0007_user_last_active.sql, 0008_invite_code_note.sql, 0009_token_invalidated_at.sql, 0010_list_order_indexes.sql.
+Schema: migrations/ is the single source of truth for the database shape. docs/schema.md is a GENERATED view of the live D1 structure (tables, columns, types, nullability, defaults, PK, indexes, foreign keys) meant for humans and LLMs to read, because there is no ORM to describe the tables in code. Never hand-edit docs/schema.md; regenerate it with `npm run schema` after every migration and commit both.
+Maintenance: after any context reset, read the "Maintenance checklist" section before changing the schema or adding a route - migrations, docs/schema.md and the README migration table have to move together.
 D1 binding: env.DB -> database name api-worker-db (configured in wrangler.jsonc).
 Commands: npx wrangler dev (local), npx wrangler d1 migrations apply api-worker-db --local|--remote, npx wrangler deploy, npx wrangler types. JWT_SECRET comes from .dev.vars locally and from a Worker secret in production.
 Conventions: soft delete via deleted_at on users/posts/comments; author display name resolves as nickname -> "first_name last_name" -> email local part, masked as "已注销" for deleted accounts; POST /activity is throttled to one batch per user per 10 seconds (429 rate_limited) while batches containing page_leave always pass; POST /posts/batch-delete soft deletes 1-50 ids and reports per-id failures.
@@ -157,8 +159,23 @@ D1 binding `DB` -> database `api-worker-db` (see `wrangler.jsonc`). Migrations l
 | `0007_user_last_active.sql` | `users.last_active_at`, backfilled from `activity_events` so retention cannot erase it |
 | `0008_invite_code_note.sql` | `invite_codes.note`, a free-form reminder of who the code was handed to |
 | `0009_token_invalidated_at.sql` | renames `users.password_changed_at` to `token_invalidated_at`; reset and logout both stamp it |
+| `0010_list_order_indexes.sql` | composite `(created_at, id)` indexes so `ORDER BY created_at DESC, id DESC` skips the sort step |
 
 Soft deletion is used for users, posts and comments (`deleted_at`); reads filter it out and deleted authors render as `已注销`. Deleting a post also soft deletes its comments.
+
+### Table shape for humans and LLMs: `docs/schema.md`
+
+There is no ORM in this project, and that has a cost: nothing in the code says what a row looks like. `src/api/models.py` describes request/response bodies, not tables, and `sqlite_master` only keeps the *initial* `CREATE TABLE` — an `ALTER TABLE ... ADD COLUMN` never rewrites it, so the DDL text goes stale the first time you add a column (which already happened five times here: 0005, 0006, 0007, 0008, 0009).
+
+So the repo keeps a generated dump instead: [`docs/schema.md`](docs/schema.md) lists every table with its columns, types, nullability, defaults, primary keys, indexes and foreign keys, plus the conventions that live only in query code (soft delete, UTC timestamps, stable pagination keys).
+
+Rules for it:
+
+- `migrations/` is the only source of truth. To change the shape, write a migration.
+- After applying a migration, run `npm run schema` (which shells out to `node scripts/dump-schema.mjs`) against the remote D1 and commit `docs/schema.md` together with the migration.
+- Never hand-edit `docs/schema.md`. It is generated; a manual edit is overwritten on the next run and would only reintroduce the drift this document exists to prevent.
+
+Why not hand-written Django/ORM model classes: this runtime is a Pyodide Worker with no Django (and no ORM at all), so `models.Model` subclasses would be dead code that never executes, while inviting both humans and LLMs to write `Post.objects.filter(...)` calls that nothing in this project can run. Two descriptions of one table — a hand-written class and the real SQL — also drift apart silently, with no mechanism to diff them. A dump of the actual database cannot drift by construction.
 
 ## Local development
 
@@ -184,3 +201,27 @@ npx wrangler deploy
 ```
 
 `JWT_SECRET` in production is a Worker secret, not a `vars` entry. After changing bindings in `wrangler.jsonc`, regenerate types with `npx wrangler types`.
+
+## Maintenance checklist (read this after a context reset)
+
+The steps below exist because an LLM's context is finite and gets compacted. `0010_list_order_indexes.sql` shipped without being added to the migration table above — that is exactly the failure mode this list prevents. Anything that must survive forgetting has to be written into a file, not left in a conversation.
+
+**Adding or changing a table / column / index**
+
+1. Write `migrations/00NN_<name>.sql`. Never edit an already-applied migration.
+2. Apply it locally, then remotely: `npx wrangler d1 migrations apply api-worker-db --local` / `--remote`.
+3. Run `npm run schema` — this regenerates `docs/schema.md` from the live database.
+4. Add a row to the migration table in [Database](#database), with the *reason*, not just the column name.
+5. Commit the migration, `docs/schema.md` and this README in **one** commit, so the three can never be reviewed apart.
+6. If the change touches a route, a permission code or the response envelope, update the routes / permissions lines at the top of this file too.
+
+**Adding a route**
+
+Update all three of: the `Routes:` line at the top, the router wiring in `src/api/app.py`, and the permissions table if it is gated.
+
+**Things that keep getting re-discovered and should not be re-derived**
+
+- `sqlite_master.sql` holds only the *initial* `CREATE TABLE`; every `ALTER TABLE ... ADD COLUMN` since 0005 is invisible there. Only `PRAGMA table_info` shows the real shape.
+- D1 rejects table-valued pragma functions in a JOIN (`pragma_table_info(...)` → `not authorized: SQLITE_AUTH`). Issue one bare `PRAGMA` statement per table instead; that is why `scripts/dump-schema.mjs` loops.
+- `_cf_KV` is a Cloudflare-internal table and is not readable through the API; any schema dump must filter `name NOT LIKE '_cf_%'` and skip `d1_migrations`.
+- `d1 execute --json` prints its banner before the JSON, so parse from the first `[`/`{`, not the whole stdout.
