@@ -27,6 +27,7 @@ from __future__ import annotations
 import base64
 import pickle
 from typing import Any
+from uuid import uuid4
 
 from infra.db import Database
 
@@ -197,6 +198,34 @@ class Cache:
             (self._key(key),),
         )
         return row is not None
+
+    async def record_hit(self, bucket: str, timeout: int) -> int:
+        """Record one hit in a window bucket and return the running count.
+
+        A read-modify-write counter is not safe here: concurrent requests all
+        read the same old value and write the same increment, so a burst walks
+        straight through the limit. One row per hit makes the write atomic
+        (``ON CONFLICT DO NOTHING`` never blocks another hit), and the count is
+        a key-range scan over the bucket prefix.
+
+        ``bucket`` should already identify the window (``"read:ip:1.2.3.4:293"``),
+        so expired rows simply stop matching the ``expires_at`` filter and the
+        window rolls over on its own. Rows are left to the existing cache purge.
+        """
+        hit_key = f"{bucket}:{uuid4().hex}"
+        prefix = self._key(bucket) + ":"
+        await self._db.execute(
+            "INSERT INTO cache_entries (key, value, expires_at, created_at, updated_at) "
+            "VALUES (?, ?, datetime('now', ?), datetime('now'), datetime('now')) "
+            "ON CONFLICT(key) DO NOTHING",
+            (self._key(hit_key), encode_value(1), f"{int(timeout)} seconds"),
+        )
+        row = await self._db.fetch_one(
+            "SELECT COUNT(*) AS hits FROM cache_entries "
+            "WHERE key >= ? AND key < ? AND expires_at > datetime('now')",
+            (prefix, prefix + "~"),
+        )
+        return int(row["hits"]) if row else 0
 
     async def get_or_set(
         self, key: str, default: Any, timeout: int | None = DEFAULT_TIMEOUT

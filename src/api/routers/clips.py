@@ -107,20 +107,6 @@ def _read_window() -> tuple[str, int]:
     return str(stamp), remaining + 1
 
 
-async def _take(cache: Cache, key: str, limit: int, ttl: int) -> bool:
-    """Count one hit against a fixed window; ``False`` means over budget.
-
-    Read-modify-write, not atomic: two simultaneous requests may both read the
-    old count. That is acceptable here — the purpose is to stop a loop, not to
-    bill anyone to the request.
-    """
-    used = await cache.get(key, 0) or 0
-    if used >= limit:
-        return False
-    await cache.set(key, used + 1, timeout=ttl)
-    return True
-
-
 def _read_limited(retry_after: int) -> ApiError:
     return ApiError(
         CODE_RATE_LIMITED,
@@ -178,13 +164,12 @@ async def read_clip(
     window, ttl = _read_window()
 
     ip = client_ip(request)
-    if ip is not None and not await _take(
-        cache, f"read:ip:{ip}:{window}", CLIP_READ_IP_LIMIT, ttl
-    ):
-        raise _read_limited(ttl)
-    if not await _take(
-        cache, f"read:code:{checked}:{window}", CLIP_READ_CODE_LIMIT, ttl
-    ):
+    if ip is not None:
+        hits = await cache.record_hit(f"read:ip:{ip}:{window}", ttl)
+        if hits > CLIP_READ_IP_LIMIT:
+            raise _read_limited(ttl)
+    hits = await cache.record_hit(f"read:code:{checked}:{window}", ttl)
+    if hits > CLIP_READ_CODE_LIMIT:
         raise _read_limited(ttl)
 
     value = await cache.get(checked)
