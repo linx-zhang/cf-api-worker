@@ -88,15 +88,22 @@ _POST_LIST_FILTERS = "SELECT p.id, p.title FROM posts p JOIN users u ON u.id = p
 
 
 def _filter_conditions(
-    q: str | None, author: str | None
+    q: str | None, author: str | None, author_id: int | None = None
 ) -> tuple[list[str], list[object]]:
-    """Shared ``q`` / ``author`` predicates so list and neighbours never drift."""
+    """Shared ``q`` / ``author`` / ``author_id`` predicates so list and neighbours never drift.
+
+    ``author_id`` is the exact-author filter behind the UI's「我的」toggle; ``author``
+    stays the fuzzy text search. They compose, so "mine + keyword" still narrows.
+    """
     conditions: list[str] = []
     params: list[object] = []
     keyword = (q or "").strip()
     if keyword:
         conditions.append("p.title LIKE ?")
         params.append(f"%{keyword}%")
+    if author_id is not None:
+        conditions.append("p.author_id = ?")
+        params.append(author_id)
     author_keyword = (author or "").strip()
     if author_keyword:
         # 作者既能按邮箱/昵称搜，也能按「名 姓」搜
@@ -115,15 +122,17 @@ async def list_posts(
     _legacy: None = Depends(reject_legacy_paging),
     q: str | None = Query(None, max_length=64),
     author: str | None = Query(None, max_length=64),
+    author_id: int | None = Query(None, ge=1),
     db: Database = Depends(get_db),
 ) -> JSONResponse:
-    """List posts; ``q`` is a fuzzy title filter, ``author`` a fuzzy author filter.
+    """List posts; ``q`` is a fuzzy title filter, ``author`` a fuzzy author filter,
+    ``author_id`` narrows to one exact author (used by the「我的」toggle).
 
     Returns ``{items, has_next}`` — see ``split_page`` in ``api/responses.py``
     for the paging standard.
     """
     limit, offset = page
-    conditions, params = _filter_conditions(q, author)
+    conditions, params = _filter_conditions(q, author, author_id)
     where = "".join(f" AND {condition}" for condition in conditions)
     posts = await db.fetch_all(
         _POST_SELECT
@@ -145,6 +154,7 @@ async def get_post_neighbors(
     post_id: int,
     q: str | None = Query(None, max_length=64),
     author: str | None = Query(None, max_length=64),
+    author_id: int | None = Query(None, ge=1),
     db: Database = Depends(get_db),
 ) -> JSONResponse:
     """Neighbouring posts in the *currently filtered* list order.
@@ -161,7 +171,7 @@ async def get_post_neighbors(
     post = await _get_post(db, post_id)
     created_at = post["created_at"]
     pid = post["id"]
-    conditions, filter_params = _filter_conditions(q, author)
+    conditions, filter_params = _filter_conditions(q, author, author_id)
     where = "".join(f" AND {condition}" for condition in conditions)
     params = (*filter_params, created_at, created_at, pid)
 
