@@ -64,6 +64,11 @@ src/
     activity_retention.py   purge of activity_events older than 30 days
     cache_cleanup.py        purge of expired cache_entries rows
 migrations/                 numbered SQL migrations applied by wrangler
+docs/
+  schema.md                 generated dump of the live D1 shape (`npm run schema`)
+  api.md                    hand-written endpoint contract, checked by `npm run api:doc`
+scripts/
+  check-api-doc.py          diffs docs/api.md against the route decorators
 ```
 
 ## Response envelope
