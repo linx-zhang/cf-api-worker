@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI
 from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import Response
 
@@ -30,14 +30,24 @@ app.add_middleware(
     max_age=86400,
 )
 
-app.include_router(auth.router, prefix="/auth", tags=["auth"])
-app.include_router(posts.router, prefix="/posts", tags=["posts"])
-app.include_router(comments.router, prefix="/posts", tags=["comments"])
-app.include_router(comments.delete_router, prefix="/comments", tags=["comments"])
-app.include_router(admin.router, prefix="/admin", tags=["admin"])
-app.include_router(activity.router, prefix="/activity", tags=["activity"])
-app.include_router(memos.router, prefix="/memos", tags=["memos"])
-app.include_router(clips.router, prefix="/clips", tags=["clips"])
+# 业务接口统一在 /api 下。根路径留给平台自己的东西：/ 是健康检查，/docs 与
+# /openapi.json 是 FastAPI 自带的，以后若要加 /rss、/og 这类非 API 端点也不打架。
+# 前端的路径常量集中在 src/api/client.ts 的 API_ROOT，两边靠 check-contract 之外的
+# 约定对齐：改这里必须同步改前端与 docs/api.md。
+API_PREFIX = "/api"
+
+api = APIRouter(prefix=API_PREFIX)
+
+api.include_router(auth.router, prefix="/auth", tags=["auth"])
+api.include_router(posts.router, prefix="/posts", tags=["posts"])
+api.include_router(comments.router, prefix="/posts", tags=["comments"])
+api.include_router(comments.delete_router, prefix="/comments", tags=["comments"])
+api.include_router(admin.router, prefix="/admin", tags=["admin"])
+api.include_router(activity.router, prefix="/activity", tags=["activity"])
+api.include_router(memos.router, prefix="/memos", tags=["memos"])
+api.include_router(clips.router, prefix="/clips", tags=["clips"])
+
+app.include_router(api)
 
 install_error_handlers(app)
 

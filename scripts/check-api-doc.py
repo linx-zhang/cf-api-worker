@@ -20,8 +20,13 @@ ROUTERS = ROOT / "src" / "api" / "routers"
 APP = ROOT / "src" / "api" / "app.py"
 DOC = ROOT / "docs" / "api.md"
 
-_ROUTE_RE = re.compile(r'@(\w+)\.(get|post|patch|delete|put)\("([^"]*)"', re.M)
+_ROUTE_RE = re.compile(
+    r'@(\w+)\.(get|post|patch|delete|put)\("([^"]*)"', re.MULTILINE
+)
 _MOUNT_RE = re.compile(r'include_router\((\w+)\.(\w+), prefix="([^"]*)"')
+# 业务路由都挂在一个带前缀的父 router 上（``app.include_router(api)``），
+# 所以文档里的路径要带上这一层；正则取常量，避免脚本里再抄一遍。
+_PREFIX_RE = re.compile(r'^API_PREFIX = "([^"]*)"', re.MULTILINE)
 
 
 def _mounts() -> dict[str, dict[str, str]]:
@@ -37,8 +42,16 @@ def _mounts() -> dict[str, dict[str, str]]:
     return mounts
 
 
+def _api_prefix() -> str:
+    """业务 router 的公共前缀，例如 ``/api``；没有这一层时返回空串。"""
+    text = APP.read_text(encoding="utf-8")
+    match = _PREFIX_RE.search(text)
+    return match.group(1) if match else ""
+
+
 def _routes() -> list[tuple[str, str]]:
     mounts = _mounts()
+    prefix = _api_prefix()
     result: list[tuple[str, str]] = []
     for path in sorted(ROUTERS.glob("*.py")):
         if path.name.startswith("_"):
@@ -46,10 +59,10 @@ def _routes() -> list[tuple[str, str]]:
         text = path.read_text(encoding="utf-8")
         module_mounts = mounts.get(path.stem, {})
         for obj, verb, sub in _ROUTE_RE.findall(text):
-            prefix = module_mounts.get(obj)
-            if prefix is None:
+            mount = module_mounts.get(obj)
+            if mount is None:
                 continue
-            full = (prefix + sub) or "/"
+            full = (prefix + mount + sub) or "/"
             result.append((verb.upper(), full))
     result.append(("GET", "/"))
     return sorted(result)

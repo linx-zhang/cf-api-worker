@@ -22,11 +22,11 @@ Base URL：`https://linx-api-78i.pages.dev`（生产）。CORS `allow_origins=["
 
 **分页**：只用 `limit` + `offset`。`limit` 1–100（默认 20），`offset` ≥ 0。
 列表返回 `{items, has_next}`；`page` / `page_size` / `pageSize` 一律 `422 validation_error`。
-`/admin/users` 与 `/admin/invite-codes` 额外带 `total`（界面要显示「共 N 条」），
+`/api/admin/users` 与 `/api/admin/invite-codes` 额外带 `total`（界面要显示「共 N 条」），
 但翻页必须靠 `has_next`，不能拿 `total` 做算术——`total` 与实际页不同事务。
 
 **时间**：服务端时间戳统一 `TEXT`，`datetime('now')` 写入，即 UTC；本地化只在前端做。
-`/activity` 的 `ts` 是客户端 epoch 毫秒：允许 30 天内、未来不超过 5 分钟。
+`/api/activity` 的 `ts` 是客户端 epoch 毫秒：允许 30 天内、未来不超过 5 分钟。
 
 **软删除**：`users` / `posts` / `comments` / `memos` 都有 `deleted_at`，读取一律带 `deleted_at IS NULL`；
 删帖连带软删它的评论，删评论连带软删回复子树。
@@ -36,43 +36,43 @@ Base URL：`https://linx-api-78i.pages.dev`（生产）。CORS `allow_origins=["
 | 方法 | 路径 | 鉴权 | 请求 | 响应 `data` |
 | --- | --- | --- | --- | --- |
 | GET | `/` | 公开 | — | `{service, status}` |
-| POST | `/auth/register` | 公开 | `{email, password 8-128, invite_code?}` | 201 `TokenOut` |
-| POST | `/auth/login` | 公开 | `{email, password}` | `TokenOut` |
-| GET | `/auth/me` | 登录 | — | `MeOut`（含 `permissions[]`） |
-| PATCH | `/auth/me` | `account:update:self` | 资料字段至少一项 | `MeOut` |
-| POST | `/auth/logout` | 登录 | — | `{id}`，`detail="logout"` |
-| GET | `/posts` | 公开 | `limit/offset`、`q≤64`（标题模糊）、`author≤64`（作者模糊）、`author_id≥1`（精确作者） | `{items: PostOut[], has_next}` |
-| GET | `/posts/{post_id}` | 公开 | — | `PostOut` |
-| GET | `/posts/{post_id}/neighbors` | 公开 | 同 `/posts` 的筛选参数 | `{prev, next}`，各为 `{id,title}` 或 `null` |
-| POST | `/posts` | `post:create:any` | `{title 1-200, body_md}` | 201 `PostOut` |
-| POST | `/posts/batch-delete` | `post:delete:any` | `{ids: 1-50 个，自动去重}` | `{deleted: number[], failed: [{id,code,detail}]}` |
-| PATCH | `/posts/{post_id}` | 本人 `post:update:own` 或 `post:update:any` | `{title?, body_md?}`，至少一项 | `PostOut` |
-| DELETE | `/posts/{post_id}` | 本人 `post:delete:own` 或 `post:delete:any` | — | `{id, deleted_comments}` |
-| GET | `/posts/{post_id}/comments` | 公开 | — | `CommentOut[]`（裸数组，不分页） |
-| POST | `/posts/{post_id}/comments` | `comment:create:any` | `{body 1-5000, parent_id?}` | 201 `CommentOut` |
-| DELETE | `/comments/{comment_id}` | 本人 `comment:delete:own` 或 `comment:delete:any` | — | `{id, deleted_comments}` |
-| POST | `/activity` | `activity:write:self` | `{events: 1-50 条}` | `{accepted}` |
-| POST | `/activity/visitor` | 公开 | `{events: 1-20 条}` | `{accepted}` |
-| POST | `/clips` | 登录 | `{title ≤80（默认空）, body 1-20000}` | 201 `{code, title, body, created_at, expires_at}` |
-| GET | `/clips/{code}` | 公开 | `code` 必须是 uuid4 的 32 位十六进制 | `{code, title, body, created_at, expires_at}` |
-| DELETE | `/clips/{code}` | 本人 `clip:delete:own` 或 `clip:delete:any` | — | `{code}` |
-| GET | `/memos` | 登录 | `limit/offset`、`done?: bool` | `{items: MemoOut[], has_next}` |
-| GET | `/memos/summary` | 登录 | — | `{pending, done, due}` |
-| POST | `/memos` | 登录 | `{body 1-2000, due_at? "YYYY-MM-DD HH:MM:SS"}`（UTC） | 201 `MemoOut` |
-| PATCH | `/memos/{memo_id}` | 登录 | `{body?, done?, due_at?}`，至少一项 | `MemoOut` |
-| DELETE | `/memos/{memo_id}` | 登录 | — | `{id}` |
-| POST | `/admin/invite-codes` | `invite_code:create:any` | `{role: internal\|admin, count 1-50, expires_in_days 1-365, note?≤64}` | 201 `InviteCodeOut[]` |
-| GET | `/admin/invite-codes` | `invite_code:read:any` | `status?: unused\|used\|expired`、`role?`、`limit/offset` | `{items, has_next, total}` |
-| DELETE | `/admin/invite-codes/{code}` | `invite_code:delete:any` | — | `{code}` |
-| GET | `/admin/users` | `user:read:any` | `q?≤200`（邮箱模糊）、`role?`、`limit/offset` | `{items: AdminUserOut[], has_next, total}` |
-| PATCH | `/admin/users/{user_id}` | `user:update:any` | `{email?, role?, 资料字段?}` | `AdminUserOut` |
-| POST | `/admin/users/{user_id}/reset-password` | `user:reset_password:any` | `{password? 8-128}` | `{id, email, password, generated, password_reset_at}` |
-| DELETE | `/admin/users/{user_id}` | `user:delete:any` | — | `{id}` |
-| GET | `/admin/activity` | `activity:read:any` | `user_id?`、`type?: page_view\|heartbeat\|page_leave`、`from?`、`to?`、`limit/offset` | `{items: ActivityOut[], has_next}` |
-| GET | `/admin/analytics/summary` | `activity:read:any` | `days 1-90`（默认 7） | `AnalyticsSummaryOut` |
+| POST | `/api/auth/register` | 公开 | `{email, password 8-128, invite_code?}` | 201 `TokenOut` |
+| POST | `/api/auth/login` | 公开 | `{email, password}` | `TokenOut` |
+| GET | `/api/auth/me` | 登录 | — | `MeOut`（含 `permissions[]`） |
+| PATCH | `/api/auth/me` | `account:update:self` | 资料字段至少一项 | `MeOut` |
+| POST | `/api/auth/logout` | 登录 | — | `{id}`，`detail="logout"` |
+| GET | `/api/posts` | 公开 | `limit/offset`、`q≤64`（标题模糊）、`author≤64`（作者模糊）、`author_id≥1`（精确作者） | `{items: PostOut[], has_next}` |
+| GET | `/api/posts/{post_id}` | 公开 | — | `PostOut` |
+| GET | `/api/posts/{post_id}/neighbors` | 公开 | 同 `/api/posts` 的筛选参数 | `{prev, next}`，各为 `{id,title}` 或 `null` |
+| POST | `/api/posts` | `post:create:any` | `{title 1-200, body_md}` | 201 `PostOut` |
+| POST | `/api/posts/batch-delete` | `post:delete:any` | `{ids: 1-50 个，自动去重}` | `{deleted: number[], failed: [{id,code,detail}]}` |
+| PATCH | `/api/posts/{post_id}` | 本人 `post:update:own` 或 `post:update:any` | `{title?, body_md?}`，至少一项 | `PostOut` |
+| DELETE | `/api/posts/{post_id}` | 本人 `post:delete:own` 或 `post:delete:any` | — | `{id, deleted_comments}` |
+| GET | `/api/posts/{post_id}/comments` | 公开 | — | `CommentOut[]`（裸数组，不分页） |
+| POST | `/api/posts/{post_id}/comments` | `comment:create:any` | `{body 1-5000, parent_id?}` | 201 `CommentOut` |
+| DELETE | `/api/comments/{comment_id}` | 本人 `comment:delete:own` 或 `comment:delete:any` | — | `{id, deleted_comments}` |
+| POST | `/api/activity` | `activity:write:self` | `{events: 1-50 条}` | `{accepted}` |
+| POST | `/api/activity/visitor` | 公开 | `{events: 1-20 条}` | `{accepted}` |
+| POST | `/api/clips` | 登录 | `{title ≤80（默认空）, body 1-20000}` | 201 `{code, title, body, created_at, expires_at}` |
+| GET | `/api/clips/{code}` | 公开 | `code` 必须是 uuid4 的 32 位十六进制 | `{code, title, body, created_at, expires_at}` |
+| DELETE | `/api/clips/{code}` | 本人 `clip:delete:own` 或 `clip:delete:any` | — | `{code}` |
+| GET | `/api/memos` | 登录 | `limit/offset`、`done?: bool` | `{items: MemoOut[], has_next}` |
+| GET | `/api/memos/summary` | 登录 | — | `{pending, done, due}` |
+| POST | `/api/memos` | 登录 | `{body 1-2000, due_at? "YYYY-MM-DD HH:MM:SS"}`（UTC） | 201 `MemoOut` |
+| PATCH | `/api/memos/{memo_id}` | 登录 | `{body?, done?, due_at?}`，至少一项 | `MemoOut` |
+| DELETE | `/api/memos/{memo_id}` | 登录 | — | `{id}` |
+| POST | `/api/admin/invite-codes` | `invite_code:create:any` | `{role: internal\|admin, count 1-50, expires_in_days 1-365, note?≤64}` | 201 `InviteCodeOut[]` |
+| GET | `/api/admin/invite-codes` | `invite_code:read:any` | `status?: unused\|used\|expired`、`role?`、`limit/offset` | `{items, has_next, total}` |
+| DELETE | `/api/admin/invite-codes/{code}` | `invite_code:delete:any` | — | `{code}` |
+| GET | `/api/admin/users` | `user:read:any` | `q?≤200`（邮箱模糊）、`role?`、`limit/offset` | `{items: AdminUserOut[], has_next, total}` |
+| PATCH | `/api/admin/users/{user_id}` | `user:update:any` | `{email?, role?, 资料字段?}` | `AdminUserOut` |
+| POST | `/api/admin/users/{user_id}/reset-password` | `user:reset_password:any` | `{password? 8-128}` | `{id, email, password, generated, password_reset_at}` |
+| DELETE | `/api/admin/users/{user_id}` | `user:delete:any` | — | `{id}` |
+| GET | `/api/admin/activity` | `activity:read:any` | `user_id?`、`type?: page_view\|heartbeat\|page_leave`、`from?`、`to?`、`limit/offset` | `{items: ActivityOut[], has_next}` |
+| GET | `/api/admin/analytics/summary` | `activity:read:any` | `days 1-90`（默认 7） | `AnalyticsSummaryOut` |
 
-> 路由挂载：`/auth`、`/posts`、`/comments`、`/admin`、`/activity`、`/memos`、`/clips`
-> （见 `src/api/app.py`）。`comments.py` 同时挂在 `/posts` 与 `/comments` 两个前缀下。
+> 路由挂载：`/api/auth`、`/api/posts`、`/api/comments`、`/api/admin`、`/api/activity`、`/api/memos`、`/api/clips`
+> （见 `src/api/app.py`）。`comments.py` 同时挂在 `/api/posts` 与 `/api/comments` 两个前缀下。
 
 ## 主要对象
 
@@ -126,7 +126,7 @@ Base URL：`https://linx-api-78i.pages.dev`（生产）。CORS `allow_origins=["
 | `activity:read:any` | | ✓ |
 
 `PUBLIC` 是描述未登录读权限的伪角色（`post:read:any`、`comment:read:any`），
-从不通过 `/auth/me` 下发。`/memos` 与 `POST /clips` 不设权限码：登录即可，
+从不通过 `/api/auth/me` 下发。`/api/memos` 与 `POST /clips` 不设权限码：登录即可，
 归属由 token 决定（别人的 memo 一律回答 `404`，不区分「存在但无权」）。
 
 ## 限流
@@ -174,12 +174,12 @@ HTTP 状态只是传输层，业务含义看 `code`。
 
 | 前端 | 覆盖 |
 | --- | --- |
-| `src/api/auth.ts` | `/auth/*` |
-| `src/api/blog.ts` | `/posts`、`/posts/{id}/comments`、`/comments/{id}` |
-| `src/api/memos.ts` | `/memos*` |
-| `src/api/clips.ts` | `/clips*` |
-| `src/api/admin.ts` | `/admin/*` |
-| `src/activity/` | `/activity`、`/activity/visitor` |
+| `src/api/auth.ts` | `/api/auth/*` |
+| `src/api/blog.ts` | `/api/posts`、`/api/posts/{id}/comments`、`/api/comments/{id}` |
+| `src/api/memos.ts` | `/api/memos*` |
+| `src/api/clips.ts` | `/api/clips*` |
+| `src/api/admin.ts` | `/api/admin/*` |
+| `src/activity/` | `/api/activity`、`/api/activity/visitor` |
 
 前端 `src/constants.ts` 里的上限（`PAGE_SIZE`、`MEMO_BODY_MAX`、`POST_TITLE_MAX`、
 `COMMENT_BODY_MAX`、`CLIP_TITLE_MAX`、`CLIP_BODY_MAX`、`ACTIVITY_MAX_BATCH`、

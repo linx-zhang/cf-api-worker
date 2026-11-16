@@ -104,7 +104,8 @@ def _validation_summary(errors: list[dict], path: str = "") -> tuple[str, str]:
         # is not a field-level value error, so report it as a plain 422.
         message = str(first.get("msg", DETAIL_INVALID_VALUE))
         return CODE_VALIDATION_ERROR, DETAIL_VALIDATION_ERROR.format(reason=message)
-    if field == "role" and path.startswith("/admin/users/"):
+    # 路径带 /api 前缀，所以用包含判断而不是 startswith：前缀再调整也不会漏。
+    if field == "role" and "/admin/users/" in path:
         # Admin user management allows all three roles, unlike invite creation.
         code, template = CODE_INVALID_ROLE, DETAIL_INVALID_ROLE
     else:
