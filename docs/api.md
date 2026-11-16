@@ -58,7 +58,7 @@ Base URL：`https://linx-api-78i.pages.dev`（生产）。CORS `allow_origins=["
 | DELETE | `/clips/{code}` | 本人 `clip:delete:own` 或 `clip:delete:any` | — | `{code}` |
 | GET | `/memos` | 登录 | `limit/offset`、`done?: bool` | `{items: MemoOut[], has_next}` |
 | GET | `/memos/summary` | 登录 | — | `{pending, done, due}` |
-| POST | `/memos` | 登录 | `{body 1-2000, due_at? "YYYY-MM-DD"}` | 201 `MemoOut` |
+| POST | `/memos` | 登录 | `{body 1-2000, due_at? "YYYY-MM-DD HH:MM:SS"}`（UTC） | 201 `MemoOut` |
 | PATCH | `/memos/{memo_id}` | 登录 | `{body?, done?, due_at?}`，至少一项 | `MemoOut` |
 | DELETE | `/memos/{memo_id}` | 登录 | — | `{id}` |
 | POST | `/admin/invite-codes` | `invite_code:create:any` | `{role: internal\|admin, count 1-50, expires_in_days 1-365, note?≤64}` | 201 `InviteCodeOut[]` |
@@ -87,7 +87,10 @@ Base URL：`https://linx-api-78i.pages.dev`（生产）。CORS `allow_origins=["
 **CommentOut**：`{id, post_id, author_id, author_name, parent_id?, body, created_at}`（不含邮箱）
 
 **MemoOut**：`{id, body, done, done_at?, due_at?, created_at, updated_at}`；
-`done_at` 是完成时间，取消勾选时后端清空；`due_at` 是本地日期，不含时刻与时区。
+所有时间列统一是 **UTC 的 `YYYY-MM-DD HH:MM:SS`**（与 `datetime('now')` 同形，不带时区后缀）。
+`done_at` 是完成时间，取消勾选时后端清空；`due_at` 是到期**时刻**——客户端把本地那一天的
+23:59:59 换算成 UTC 再上送（如北京时间 11-20 到期 → `2026-11-20 15:59:59`），
+只给日期的写法会被拒（422），服务端不再替客户端猜时区。
 
 **ActivityOut**：`{id, user_id?, user_email?, type, path, ts, duration_ms?, ip?, country?, created_at}`；
 匿名行的 `user_id` / `user_email` 为 `null`。

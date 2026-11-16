@@ -33,8 +33,9 @@ router = APIRouter()
 _MEMO_COLUMNS = "id, body, done, done_at, due_at, created_at, updated_at"
 _MEMO_SELECT = f"SELECT {_MEMO_COLUMNS} FROM memos WHERE deleted_at IS NULL"
 
-# 「今天」按北京时区算，与 due_at（本地日期）同一套语义。
-_TODAY_CN = "date('now', '+8 hours')"
+# 到期时刻是 UTC datetime，和 created_at 一样直接与 datetime('now') 比，
+# 不再需要「按北京时区取今天」那层换算。
+_TODAY_UTC = "datetime('now')"
 
 
 def _memo_out(row: dict) -> dict:
@@ -68,7 +69,7 @@ async def memo_summary(
         "COALESCE(SUM(CASE WHEN done = 0 THEN 1 ELSE 0 END), 0) AS pending, "
         "COALESCE(SUM(CASE WHEN done = 1 THEN 1 ELSE 0 END), 0) AS done, "
         "COALESCE(SUM(CASE WHEN done = 0 AND due_at IS NOT NULL "
-        f"AND due_at <= {_TODAY_CN} THEN 1 ELSE 0 END), 0) AS due "
+        f"AND due_at <= {_TODAY_UTC} THEN 1 ELSE 0 END), 0) AS due "
         "FROM memos WHERE user_id = ? AND deleted_at IS NULL",
         (user["id"],),
     )

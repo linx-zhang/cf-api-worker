@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal
 
 from pydantic import (
@@ -355,26 +355,30 @@ class InviteCodeOut(BaseModel):
 
 # --- Personal-space memos ---------------------------------------------------
 
-# 到期日只有"天"，没有时刻和时区：存 YYYY-MM-DD，客户端按本地日期解释。
-_MEMO_DUE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+# 到期时刻与全站其他时间列同形：UTC 的 'YYYY-MM-DD HH:MM:SS'。
+# 「哪天到期」是客户端按自己的本地日末（23:59:59）换算成 UTC 再上送的，
+# 服务端不做时区猜测，也不接受只给日期的写法——那样又退回本地日期语义。
+_MEMO_DATE_ONLY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 MEMO_BODY_MAX = 2000
 
 
 def _check_due_at(value: str | None) -> str | None:
-    """Validate a memo due date; blank clears it, anything else must be a real day."""
+    """Validate a memo due instant; blank clears it, otherwise it must be a datetime."""
     if value is None:
         return None
     text = value.strip()
     if not text:
         return None
-    if not _MEMO_DUE_PATTERN.match(text):
-        raise ValueError("due_at must be a date in YYYY-MM-DD form")
+    if _MEMO_DATE_ONLY.match(text):
+        raise ValueError("due_at must include a time, e.g. 2026-11-20 15:59:59")
     try:
-        # 正则挡不住 2026-02-30 这种"格式对、日期不存在"的值
-        datetime.strptime(text, "%Y-%m-%d")
+        moment = datetime.fromisoformat(text.replace("Z", "+00:00"))
     except ValueError:
-        raise ValueError("due_at must be a real calendar date") from None
-    return text
+        raise ValueError("due_at must be a datetime like 2026-11-20 15:59:59") from None
+    # 带时区的写法（+08:00 / Z）先归到 UTC；不带时区的一律按 UTC 理解
+    if moment.tzinfo is not None:
+        moment = moment.astimezone(timezone.utc).replace(tzinfo=None)
+    return moment.strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _check_memo_body(value: str) -> str:
