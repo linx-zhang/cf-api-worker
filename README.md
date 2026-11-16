@@ -3,11 +3,11 @@ Project: api-worker - a small blog/reporting backend running on Cloudflare Worke
 Stack: Cloudflare Workers (python_workers compat flag, Pyodide runtime) + FastAPI (pure-ASGI glue) + D1 (SQLite) + PyJWT + wrangler 4. No ORM: every query is hand-written SQL through src/infra/db.py.
 Layout: src/entry.py (Worker entry, Default entrypoint exported for wrangler) -> src/api/ (app.py router wiring, deps.py auth/permissions/client ip, models.py Pydantic schemas, responses.py envelope + error handlers, routers/) -> src/services/ (business rules that need SQL: invite_codes.py) -> src/core/ (permissions.py role->codes map, constants.py response codes/details, security.py JWT + PBKDF2, utils.py helpers) -> src/infra/ (db.py D1 wrapper, config.py env settings, passwords.py WebCrypto hashing) -> src/tasks/ (cron.py cron entry, activity_retention.py purge job).
 Envelope: every response is {"code": str, "detail": str, "data": any}; errors are raised as ApiError(code, detail, status) and rendered by handlers in api/responses.py (422 RequestValidationError, 404 not_found, 405 method_not_allowed, 500 internal_error).
-Routes: GET /; POST /auth/register; POST /auth/login; GET /auth/me; PATCH /auth/me; GET /posts (filters: q title fuzzy, author author fuzzy, author_id exact author); GET /posts/{post_id}; POST /posts; POST /posts/batch-delete; PATCH /posts/{post_id}; DELETE /posts/{post_id}; GET /posts/{post_id}/comments; POST /posts/{post_id}/comments; DELETE /comments/{comment_id}; GET /memos; GET /memos/summary; POST /memos; PATCH /memos/{memo_id}; DELETE /memos/{memo_id}; POST /clips; GET /clips/{code}; DELETE /clips/{code}; POST /activity; POST|GET /admin/invite-codes; DELETE /admin/invite-codes/{code}; GET /admin/users; PATCH /admin/users/{user_id}; POST /admin/users/{user_id}/reset-password; DELETE /admin/users/{user_id}; GET /admin/activity.
+Routes: the endpoint table (method / path / auth / request / response) lives in docs/api.md and is the source of truth; `python scripts/check-api-doc.py` diffs it against the decorators. Quick list: GET /; POST /auth/register; POST /auth/login; GET /auth/me; PATCH /auth/me; POST /auth/logout; GET /posts (filters: q title fuzzy, author author fuzzy, author_id exact author); GET /posts/{post_id}; GET /posts/{post_id}/neighbors; POST /posts; POST /posts/batch-delete; PATCH /posts/{post_id}; DELETE /posts/{post_id}; GET /posts/{post_id}/comments; POST /posts/{post_id}/comments; DELETE /comments/{comment_id}; GET /memos; GET /memos/summary; POST /memos; PATCH /memos/{memo_id}; DELETE /memos/{memo_id}; POST /clips; GET /clips/{code}; DELETE /clips/{code}; POST /activity; POST /activity/visitor; POST|GET /admin/invite-codes; DELETE /admin/invite-codes/{code}; GET /admin/users; PATCH /admin/users/{user_id}; POST /admin/users/{user_id}/reset-password; DELETE /admin/users/{user_id}; GET /admin/activity; GET /admin/analytics/summary.
 Permissions (resource:action:scope): user and internal both hold account:read:self, account:update:self, post:create:any, post:update:own, post:delete:own, comment:create:any, comment:delete:own, activity:write:self. admin holds those plus post:update:any, post:delete:any, comment:delete:any, invite_code:create:any, invite_code:read:any, invite_code:delete:any, user:read:any, user:update:any, user:delete:any, user:reset_password:any, activity:read:any. PUBLIC (never returned to clients) covers post:read:any and comment:read:any. /clips adds clip:delete:own for every signed-in role and clip:delete:any for admin, while POST /clips only needs a token (same shape as /memos); GET /clips/{code} is public because the code itself is the capability, and no route lists the stored snippets — so reads carry their own budget instead: 60/min per client ip and 120/min per code, fixed one-minute windows, answering 429 rate_limited with Retry-After. /memos is self-scoped and adds no permission code: every memo route requires a token and takes the owner from it, never from the request.
 Migrations (migrations/, applied in filename order via wrangler d1 migrations apply): 0001_init.sql, 0002_invite_codes_created_by.sql, 0003_user_soft_delete.sql, 0004_activity_events.sql, 0005_user_profile.sql, 0006_user_password_reset.sql, 0007_user_last_active.sql, 0008_invite_code_note.sql, 0009_token_invalidated_at.sql, 0010_list_order_indexes.sql, 0011_db_cache.sql, 0012_activity_anonymous.sql, 0013_memos.sql.
 Schema: migrations/ is the single source of truth for the database shape. docs/schema.md is a GENERATED view of the live D1 structure (tables, columns, types, nullability, defaults, PK, indexes, foreign keys) meant for humans and LLMs to read, because there is no ORM to describe the tables in code. Never hand-edit docs/schema.md; regenerate it with `npm run schema` after every migration and commit both.
-Maintenance: after any context reset, read the "Maintenance checklist" section before changing the schema or adding a route - migrations, docs/schema.md and the README migration table have to move together.
+Maintenance: after any context reset, read the "Maintenance checklist" section before changing the schema or adding a route - migrations, docs/schema.md, docs/api.md and the README migration table have to move together.
 D1 binding: env.DB -> database name api-worker-db (configured in wrangler.jsonc).
 Commands: npx wrangler dev (local), npx wrangler d1 migrations apply api-worker-db --local|--remote, npx wrangler deploy, npx wrangler types. JWT_SECRET comes from .dev.vars locally and from a Worker secret in production.
 Conventions: soft delete via deleted_at on users/posts/comments; author display name resolves as nickname -> "first_name last_name" -> email local part, masked as "已注销" for deleted accounts; POST /activity is throttled to one batch per user per 10 seconds (429 rate_limited) while batches containing page_leave always pass; POST /posts/batch-delete soft deletes 1-50 ids and reports per-id failures.
@@ -80,35 +80,11 @@ Every response, success or failure, looks like:
 
 ## Routes
 
-| Method | Path | Auth | Notes |
-| --- | --- | --- | --- |
-| GET | `/` | public | service status |
-| POST | `/auth/register` | public | optional `invite_code` decides the role (default `user`) |
-| POST | `/auth/login` | public | returns the token plus the full user object |
-| GET | `/auth/me` | signed in | own user object plus `permissions` |
-| PATCH | `/auth/me` | `account:update:self` | profile fields only; `email`/`role` are rejected with `422` |
-| POST | `/auth/logout` | signed in | stamps `token_invalidated_at`, so every token of this account issued before now stops working |
-| GET | `/posts` | public | `limit` (1-100), `offset`; optional `q` (fuzzy title match, max 64) and `author` (fuzzy match on email, nickname or "first last"); returns `{items, has_next}` |
-| GET | `/posts/{post_id}` | public | |
-| GET | `/posts/{post_id}/neighbors` | public | `{index, prev, next}` in list order: `prev` newer, `next` older, each `{id, title}` or `null`. Optional `q`/`author` keep the neighbours inside the filtered result set; `index` is only filled without filters |
-| POST | `/posts` | `post:create:any` | |
-| POST | `/posts/batch-delete` | `post:delete:any` | body `{ids: number[]}`, 1-50 ids, deduplicated |
-| PATCH | `/posts/{post_id}` | own or `post:update:any` | |
-| DELETE | `/posts/{post_id}` | own or `post:delete:any` | soft delete, also soft deletes its comments |
-| GET | `/posts/{post_id}/comments` | public | |
-| POST | `/posts/{post_id}/comments` | `comment:create:any` | `parent_id` must belong to the same post |
-| DELETE | `/comments/{comment_id}` | own or `comment:delete:any` | soft deletes the reply subtree |
-| POST | `/activity` | `activity:write:self` | 1-50 events per batch, throttled (see below) |
-| POST | `/activity/visitor` | public | anonymous visitors: 1-20 events, `page_view`/`page_leave` only, public paths only, throttled by ip (see below) |
-| POST | `/admin/invite-codes` | `invite_code:create:any` | role `internal` or `admin`; optional `note` (max 64) records who the code was handed to |
-| GET | `/admin/invite-codes` | `invite_code:read:any` | filters `status`, `role`, pagination; each item carries `note` and `used_by_email` (`null` until someone registers with it) |
-| DELETE | `/admin/invite-codes/{code}` | `invite_code:delete:any` | unused codes only |
-| GET | `/admin/users` | `user:read:any` | filters `q` (email search), `role`, pagination |
-| PATCH | `/admin/users/{user_id}` | `user:update:any` | email, role and/or profile fields |
-| POST | `/admin/users/{user_id}/reset-password` | `user:reset_password:any` | body `{password?}`; generates one when omitted, kills older tokens |
-| DELETE | `/admin/users/{user_id}` | `user:delete:any` | soft delete; last admin and self are protected |
-| GET | `/admin/activity` | `activity:read:any` | filters `user_id`, `type`, `from`, `to`; `limit` (1-200, default 50) + `offset`; returns `{items, has_next}` — no `total`, see the pagination note below; `user_id`/`user_email` are `null` for anonymous rows |
-| GET | `/admin/analytics/summary` | `activity:read:any` | `days` (1-90, default 7); today counters, daily series and per-identity detail; cached 60s (see below) |
+The endpoint table — method, path, auth, request body and response shape — lives in **[`docs/api.md`](docs/api.md)**. It is the single place that lists every route, because a table repeated here and there is a table that will disagree with itself the first time someone edits one copy.
+
+That file is hand-written, so it is checked instead of trusted: `python scripts/check-api-doc.py` re-reads the decorators in `src/api/routers/` plus the `include_router` prefixes in `src/api/app.py`, and exits non-zero listing any route the table is missing or inventing. Run it before committing a route change.
+
+The subsections below are the part a table cannot carry: why the pagination standard exists, what the neighbours endpoint returns now, how logout and password reset share one invalidation column, and what the activity limits are defending against.
 
 ### Pagination: one standard
 
@@ -182,14 +158,14 @@ Because the purge deletes rows, "last active" is cached on `users.last_active_at
 
 ## Permissions
 
-Codes use `resource:action:scope`.
+Codes use `resource:action:scope`. The full role × code matrix is in [`docs/api.md`](docs/api.md#权限码矩阵); `src/core/permissions.py` is the code-level truth it mirrors.
 
 | Role | Codes |
 | --- | --- |
-| `user`, `internal` | `account:read:self`, `account:update:self`, `post:create:any`, `post:update:own`, `post:delete:own`, `comment:create:any`, `comment:delete:own`, `activity:write:self` |
-| `admin` | everything the member roles have, plus `post:update:any`, `post:delete:any`, `comment:delete:any`, `invite_code:create:any`, `invite_code:read:any`, `invite_code:delete:any`, `user:read:any`, `user:update:any`, `user:delete:any`, `user:reset_password:any`, `activity:read:any` |
+| `user`, `internal` | `account:read:self`, `account:update:self`, `post:create:any`, `post:update:own`, `post:delete:own`, `comment:create:any`, `comment:delete:own`, `activity:write:self`, `clip:delete:own` |
+| `admin` | everything the member roles have, plus `post:update:any`, `post:delete:any`, `comment:delete:any`, `clip:delete:any`, `invite_code:create:any`, `invite_code:read:any`, `invite_code:delete:any`, `user:read:any`, `user:update:any`, `user:delete:any`, `user:reset_password:any`, `activity:read:any` |
 
-`PUBLIC` is a pseudo role used only to describe unauthenticated read access (`post:read:any`, `comment:read:any`); it is never returned by `/auth/me`.
+`PUBLIC` is a pseudo role used only to describe unauthenticated read access (`post:read:any`, `comment:read:any`); it is never returned by `/auth/me`. `/memos` and `POST /clips` carry no code at all — the token is the whole rule, and the route takes the owner from it (someone else's memo answers `404`, not `403`).
 
 ## Database
 
@@ -250,6 +226,12 @@ Rules for it:
 
 Why not hand-written Django/ORM model classes: this runtime is a Pyodide Worker with no Django (and no ORM at all), so `models.Model` subclasses would be dead code that never executes, while inviting both humans and LLMs to write `Post.objects.filter(...)` calls that nothing in this project can run. Two descriptions of one table — a hand-written class and the real SQL — also drift apart silently, with no mechanism to diff them. A dump of the actual database cannot drift by construction.
 
+### Interface contract: `docs/api.md`
+
+`docs/schema.md` answers "what does a row look like"; [`docs/api.md`](docs/api.md) answers "what does a caller send and get back". It is hand-written, because half of a contract is not in the code: the request models do describe their own fields (and `pydantic` enforces them), but response bodies are assembled dict-literal by dict-literal in the handlers, and the semantics that matter most — which code is a `401` versus a `403`, that `page`/`page_size` are rejected, that a clip code is the capability — exist only as prose.
+
+So the file that could drift is checked rather than trusted. `scripts/check-api-doc.py` parses the decorators and the router prefixes, then diffs them against the table in `docs/api.md`: any route missing from the doc, or documented but not declared, fails the command. What the script cannot judge is the columns — auth, request, response — which is why the checklist above names `docs/api.md` explicitly on both the "add a route" and "change a table" paths.
+
 ## Local development
 
 ```bash
@@ -286,15 +268,15 @@ The steps below exist because an LLM's context is finite and gets compacted. `00
 3. Run `npm run schema` — this regenerates `docs/schema.md` from the live database.
 4. Add a row to the migration table in [Database](#database), with the *reason*, not just the column name.
 5. Commit the migration, `docs/schema.md` and this README in **one** commit, so the three can never be reviewed apart.
-6. If the change touches a route, a permission code or the response envelope, update the routes / permissions lines at the top of this file too.
+6. If the change touches a route, a permission code or the response envelope, update `docs/api.md` and run `python scripts/check-api-doc.py`.
 
 **Adding a route**
 
-Update all three of: the `Routes:` line at the top, the router wiring in `src/api/app.py`, and the permissions table if it is gated.
+Update all three of: `src/api/app.py` (router wiring), `docs/api.md` (the endpoint table — it is the source of truth), and the `Routes:` line at the top of this file when the one-line summary is incomplete. Then run `python scripts/check-api-doc.py`; it fails when the table and the decorators disagree. If the route is gated, add the code to `src/core/permissions.py` and both permission tables (`docs/api.md` and here).
 
 **Where scripts go**
 
-`scripts/` holds project tooling only, each wired to an npm script: `dump-schema.mjs` → `npm run schema`, `new-post.mjs` → `npm run post`. One-off scripts — data seeding, probes, one-time SQL — go under `scripts/agent/` and are never referenced by the build.
+`scripts/` holds project tooling only, each wired to an npm script: `dump-schema.mjs` → `npm run schema`, `check-api-doc.py` → `npm run api:doc`, `new-post.mjs` → `npm run post`. One-off scripts — data seeding, probes, one-time SQL — go under `scripts/agent/` and are never referenced by the build.
 
 **Adding a cron job**
 

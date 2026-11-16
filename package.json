@@ -7,6 +7,7 @@
     "dev": "uv run --frozen pywrangler dev",
     "start": "uv run --frozen pywrangler dev",
     "schema": "node scripts/dump-schema.mjs",
+    "api:doc": "python scripts/check-api-doc.py",
     "post": "node scripts/new-post.mjs"
   },
   "devDependencies": {
