@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import re
 import time
-from datetime import datetime, timezone
 from typing import Literal
 
 from pydantic import (
@@ -16,6 +14,7 @@ from pydantic import (
     model_validator,
 )
 
+from core.timestamps import normalize_utc_datetime
 from core.utils import normalize_email
 
 # Client timestamps older than this, or further in the future than the
@@ -358,27 +357,12 @@ class InviteCodeOut(BaseModel):
 # 到期时刻与全站其他时间列同形：UTC 的 'YYYY-MM-DD HH:MM:SS'。
 # 「哪天到期」是客户端按自己的本地日末（23:59:59）换算成 UTC 再上送的，
 # 服务端不做时区猜测，也不接受只给日期的写法——那样又退回本地日期语义。
-_MEMO_DATE_ONLY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 MEMO_BODY_MAX = 2000
 
 
 def _check_due_at(value: str | None) -> str | None:
-    """Validate a memo due instant; blank clears it, otherwise it must be a datetime."""
-    if value is None:
-        return None
-    text = value.strip()
-    if not text:
-        return None
-    if _MEMO_DATE_ONLY.match(text):
-        raise ValueError("due_at must include a time, e.g. 2026-11-20 15:59:59")
-    try:
-        moment = datetime.fromisoformat(text.replace("Z", "+00:00"))
-    except ValueError:
-        raise ValueError("due_at must be a datetime like 2026-11-20 15:59:59") from None
-    # 带时区的写法（+08:00 / Z）先归到 UTC；不带时区的一律按 UTC 理解
-    if moment.tzinfo is not None:
-        moment = moment.astimezone(timezone.utc).replace(tzinfo=None)
-    return moment.strftime("%Y-%m-%d %H:%M:%S")
+    """Validate a memo due instant; the rule itself lives in ``core.timestamps``."""
+    return normalize_utc_datetime(value)
 
 
 def _check_memo_body(value: str) -> str:

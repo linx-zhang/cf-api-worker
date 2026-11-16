@@ -63,6 +63,7 @@ from services.invite_codes import (
     insert_codes,
     list_codes,
 )
+from tasks.activity_retention import ACTIVITY_RETENTION_DAYS
 
 router = APIRouter()
 
@@ -451,7 +452,9 @@ async def list_activity(
 
 @router.get("/analytics/summary")
 async def analytics_summary(
-    days: int = Query(default=7, ge=1, le=90),
+    # 上限必须和 ACTIVITY_RETENTION_DAYS 对齐：活动事件只留 30 天，
+    # 允许传 90 只会拿到被保留期截断的数据，看的人却以为那是完整的 90 天。
+    days: int = Query(default=7, ge=1, le=ACTIVITY_RETENTION_DAYS),
     admin: dict = Depends(require_permission(ACTIVITY_READ_ANY)),
     db: Database = Depends(get_db),
 ) -> JSONResponse:

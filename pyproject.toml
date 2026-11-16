@@ -12,9 +12,15 @@ dependencies = [
 [dependency-groups]
 dev = [
     "ruff>=0.17.4",
+    "pytest>=8",
     "workers-py",
     "workers-runtime-sdk",
 ]
+
+[tool.pytest.ini_options]
+# ``src`` 是运行时导入根（worker 里就是 from api.app import app），测试沿用同一套
+pythonpath = ["src"]
+testpaths = ["tests"]
 
 [tool.ruff.lint]
 # FastAPI dependency injection uses Depends() in argument defaults by design.

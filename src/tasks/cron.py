@@ -10,6 +10,7 @@ from __future__ import annotations
 from infra.db import Database
 from tasks.activity_retention import ACTIVITY_RETENTION_DAYS, purge_old_activity
 from tasks.cache_cleanup import purge_expired_cache
+from tasks.memo_tombstone import MEMO_TOMBSTONE_DAYS, purge_memo_tombstones
 
 
 async def run_cron(env, cron: str = "cron") -> dict[str, int]:
@@ -34,4 +35,15 @@ async def run_cron(env, cron: str = "cron") -> dict[str, int]:
     purged = await purge_expired_cache(db)
     print(f"cache purge ({cron}): removed {purged} expired entries")
 
-    return {"activity_events": deleted, "cache_entries": purged}
+    # memo 墓碑最晚清理：它只影响个人空间的历史，晚一轮没有副作用
+    tombstones = await purge_memo_tombstones(db, days=MEMO_TOMBSTONE_DAYS)
+    print(
+        f"memo tombstones ({cron}): removed {tombstones} rows "
+        f"soft-deleted before -{MEMO_TOMBSTONE_DAYS} days"
+    )
+
+    return {
+        "activity_events": deleted,
+        "cache_entries": purged,
+        "memos": tombstones,
+    }
