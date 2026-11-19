@@ -65,7 +65,7 @@ If the application uses Durable Objects or Workflows, refer to the relevant best
 
 # 本项目：Python Worker（上面的 `npx wrangler deploy` 不适用，以本节为准）
 
-个人站 `api-worker`：FastAPI + D1，入口 `src/entry.py`，D1 `api-worker-db`，cron `15 18 * * *`（UTC）。
+个人站 `api-worker`：FastAPI + D1，入口 `src/entry.py`，D1 `api-worker-db`，两个 cron（UTC）：`15 18 * * *` 日更清理、`0 * * * *` 每小时折分析账本。
 
 ## 上线前必跑（Windows，PowerShell，无 CI）
 
@@ -74,7 +74,7 @@ $env:Path = "C:\Users\LinxZhang\.local\bin;C:\Program Files\nodejs;C:\Windows\Sy
 $env:UV_PYTHON = "3.14"
 Set-Location -LiteralPath "D:\this_code\cloudflare-workers\api-worker"
 
-uv run --frozen pytest -q              # 45 passed
+uv run --frozen pytest -q              # 111 passed
 uv run --frozen ruff check src tests   # All checks passed
 
 # 仅在新增 migrations/*.sql 时；不要加 --yes（会吐 help 并崩溃），改用 y 管道
@@ -99,7 +99,8 @@ Invoke-WebRequest "https://api-worker.linx-zhang.workers.dev/api/posts?limit=3&o
 
 - `src/api/models.py` 是契约常量真源；前端 `src/constants.ts` 是手抄副本，前端 CI 的 `scripts/check-contract.mjs` 会 clone 本仓库比对——**改常量先 push 本仓库**。
 - 纯规则（时间校验、权限码矩阵）抽在 `src/core/`，测试在 `tests/` 直跑 pytest，不碰 workerd。
-- 定时任务在 `src/tasks/`，按 activity 保留 → cache 清理 → memos 墓碑 的顺序挂在 `cron.py`。
+- 定时任务在 `src/tasks/`，日更按 activity 保留 → cache 清理 → memos 墓碑 → 分析账本的顺序挂在 `cron.py`；小时触发器只跑账本。
+- **分析页读成本**：`services/analytics_ledger.py` 把 30 天窗口折成一行账本存在 `cache_entries`（key `analytics:ledger:v1`，`timeout=None`），页面读取 = 账本 + `id > cursor AND id <= MAX(id)` 的尾巴，内存折叠后渲染，暖读不写库；尾巴超过 `ANALYTICS_MAX_TAIL_ROWS`（500）改走全量重建。`services/analytics.py` 的 `build_summary` 只是参考实现，`tests/test_analytics_ledger.py` 断言两条路径逐字段相等。窗口按**北京展示日**算（`_window_since`），不是滚动 30×24h，改这里要同步改账本裁剪。
 
 完整的上线清单、契约 10 项对照表、已知缺口，见前端仓库根目录 `AGENTS.md`。
 
