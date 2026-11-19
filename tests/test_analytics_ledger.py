@@ -271,6 +271,28 @@ def test_event_before_the_first_bucket_is_invisible_to_both(api):
     assert summary["actors"] == []
 
 
+def test_narrow_window_reports_its_own_actor_totals(api):
+    """7 天视图的访客明细必须只算 7 天，不能把 30 天账本的累计报出来。"""
+    user_id = api.seed_user("a@b.c", role="admin")
+    add_event(api, user_id=user_id, path="/wiki", minutes_ago=1)
+    # 十天前的一次访问：在 30 天窗口内，但不该进 7 天窗口
+    api.execute(
+        "INSERT INTO activity_events (user_id, type, path, ts, created_at) "
+        "VALUES (?, 'page_view', '/old', 0, datetime('now', '-10 days'))",
+        (user_id,),
+    )
+    db = db_of(api)
+    cache = FakeCache()
+    wide = run(load_summary(db, 30, cache=cache))
+    narrow = run(load_summary(db, 7, cache=cache))
+    assert wide == run(build_summary(db, 30))
+    assert narrow == run(build_summary(db, 7))
+    wide_actor = next(a for a in wide["actors"] if a["key"] == f"u:{user_id}")
+    narrow_actor = next(a for a in narrow["actors"] if a["key"] == f"u:{user_id}")
+    assert wide_actor["page_views"] == narrow_actor["page_views"] + 1
+    assert [p["path"] for p in narrow_actor["paths"]] == ["/wiki"]
+
+
 def test_beijing_today_shifts_by_eight_hours():
     # 2026-11-19 17:30 UTC == 2026-11-20 01:30 北京：跨日了
     moment = datetime(2026, 11, 19, 17, 30, tzinfo=UTC)

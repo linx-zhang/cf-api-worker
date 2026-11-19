@@ -1,7 +1,8 @@
 """增量账本合并：纯函数，不碰数据库、不读时钟。
 
 这组用例钉住的是语义，不是实现细节：按 cursor 折叠（不按事件去重）、
-按天去重访客、窗口裁剪、以及页面侧那三个 cap 的排序口径。
+按天去重访客、按天存明细（这样 7 天和 30 天两个窗口能给出各自正确的数字）、
+窗口裁剪、以及页面侧那三个 cap 的排序口径。
 """
 
 import copy
@@ -16,9 +17,11 @@ from services.analytics_merge import (
 )
 
 TODAY = "2026-11-19"
+YESTERDAY = "2026-11-18"
 
 
 def actor_row(ident, **overrides):
+    """身份行：只有 profile 与跨度，计数在 day_row 里。"""
     row = {
         "ident": ident,
         "user_id": None,
@@ -27,8 +30,6 @@ def actor_row(ident, **overrides):
         "country": None,
         "region": None,
         "city": None,
-        "page_views": 0,
-        "dwell_ms": 0,
         "first_seen": None,
         "last_seen": None,
     }
@@ -36,18 +37,26 @@ def actor_row(ident, **overrides):
     return row
 
 
-def day_row(day, ident, page_views=0):
-    return {"day": day, "ident": ident, "page_views": page_views}
-
-
-def path_row(ident, path, views=0, dwell_ms=0, last_seen=None):
+def day_row(
+    ident,
+    day=TODAY,
+    page_views=0,
+    dwell_ms=0,
+    first_seen=None,
+    last_seen=None,
+):
     return {
+        "day": day,
         "ident": ident,
-        "path": path,
-        "views": views,
+        "page_views": page_views,
         "dwell_ms": dwell_ms,
+        "first_seen": first_seen,
         "last_seen": last_seen,
     }
+
+
+def path_row(ident, path, day=TODAY, views=0, dwell_ms=0):
+    return {"day": day, "ident": ident, "path": path, "views": views, "dwell_ms": dwell_ms}
 
 
 def tail(max_id=0, day_rows=(), actor_rows=(), path_rows=()):
@@ -59,8 +68,8 @@ def tail(max_id=0, day_rows=(), actor_rows=(), path_rows=()):
     }
 
 
-def merge(ledger, payload, window_days=30):
-    return merge_tail(ledger, payload, today=TODAY, window_days=window_days)
+def merge(ledger, payload, window_days=30, today=TODAY):
+    return merge_tail(ledger, payload, today=today, window_days=window_days)
 
 
 def test_empty_ledger_has_zero_cursor_and_no_rows():
@@ -72,7 +81,8 @@ def test_merging_an_empty_tail_changes_nothing_but_the_cursor():
         empty_ledger(),
         tail(
             max_id=10,
-            actor_rows=[actor_row("ip:1.1.1.1", page_views=2, last_seen="2026-11-19 01:00:00")],
+            day_rows=[day_row("ip:1.1.1.1", page_views=2, last_seen="2026-11-19 01:00:00")],
+            actor_rows=[actor_row("ip:1.1.1.1", last_seen="2026-11-19 01:00:00")],
         ),
     )
     merged = merge(ledger, tail(max_id=10))
@@ -86,9 +96,9 @@ def test_daily_rows_sum_views_and_keep_distinct_actors():
         tail(
             max_id=5,
             day_rows=[
-                day_row(TODAY, "ip:1.1.1.1", 3),
-                day_row(TODAY, "ip:1.1.1.1", 2),  # same actor, same day
-                day_row(TODAY, "u:8", 1),
+                day_row("ip:1.1.1.1", page_views=3),
+                day_row("ip:1.1.1.1", page_views=2),  # same actor, same day
+                day_row("u:8", page_views=1),
             ],
         ),
     )
@@ -96,70 +106,50 @@ def test_daily_rows_sum_views_and_keep_distinct_actors():
     assert ledger["daily"][TODAY]["actors"] == ["ip:1.1.1.1", "u:8"]
 
 
-def test_actor_totals_accumulate_across_merges():
+def test_actor_day_totals_accumulate_across_merges():
     ledger = merge(
         empty_ledger(),
         tail(
             max_id=1,
-            actor_rows=[
-                actor_row(
-                    "ip:1.1.1.1",
-                    page_views=2,
-                    dwell_ms=1000,
-                    last_seen="2026-11-19 01:00:00",
-                )
-            ],
+            day_rows=[day_row("ip:1.1.1.1", page_views=2, dwell_ms=1000)],
+            actor_rows=[actor_row("ip:1.1.1.1")],
         ),
     )
     ledger = merge(
         ledger,
         tail(
             max_id=2,
-            actor_rows=[
-                actor_row(
-                    "ip:1.1.1.1",
-                    page_views=3,
-                    dwell_ms=500,
-                    last_seen="2026-11-19 02:00:00",
-                )
-            ],
+            day_rows=[day_row("ip:1.1.1.1", page_views=3, dwell_ms=500)],
+            actor_rows=[actor_row("ip:1.1.1.1")],
         ),
     )
-    actor = ledger["actors"]["ip:1.1.1.1"]
-    assert actor["page_views"] == 5
-    assert actor["dwell_ms"] == 1500
+    cell = ledger["actors"]["ip:1.1.1.1"]["days"][TODAY]
+    assert cell["page_views"] == 5
+    assert cell["dwell_ms"] == 1500
 
 
-def test_first_and_last_seen_take_the_extremes():
+def test_first_and_last_seen_take_the_extremes_per_day():
     ledger = merge(
         empty_ledger(),
         tail(
             max_id=1,
-            actor_rows=[
-                actor_row(
-                    "u:8",
-                    first_seen="2026-11-19 03:00:00",
-                    last_seen="2026-11-19 05:00:00",
-                )
-            ],
+            day_rows=[day_row("u:8", first_seen="2026-11-19 03:00:00", last_seen="2026-11-19 05:00:00")],
+            actor_rows=[actor_row("u:8", first_seen="2026-11-19 03:00:00", last_seen="2026-11-19 05:00:00")],
         ),
     )
     ledger = merge(
         ledger,
         tail(
             max_id=2,
-            actor_rows=[
-                actor_row(
-                    "u:8",
-                    first_seen="2026-11-18 09:00:00",
-                    last_seen="2026-11-19 04:00:00",
-                )
-            ],
+            day_rows=[day_row("u:8", first_seen="2026-11-19 01:00:00", last_seen="2026-11-19 04:00:00")],
+            actor_rows=[actor_row("u:8", first_seen="2026-11-19 01:00:00", last_seen="2026-11-19 04:00:00")],
         ),
     )
-    actor = ledger["actors"]["u:8"]
-    assert actor["first_seen"] == "2026-11-18 09:00:00"
-    assert actor["last_seen"] == "2026-11-19 05:00:00"
+    cell = ledger["actors"]["u:8"]["days"][TODAY]
+    assert cell["first_seen"] == "2026-11-19 01:00:00"
+    assert cell["last_seen"] == "2026-11-19 05:00:00"
+    assert ledger["actors"]["u:8"]["first_seen"] == "2026-11-19 01:00:00"
+    assert ledger["actors"]["u:8"]["last_seen"] == "2026-11-19 05:00:00"
 
 
 def test_geo_fields_keep_the_lexicographic_max_like_sql():
@@ -167,28 +157,15 @@ def test_geo_fields_keep_the_lexicographic_max_like_sql():
         empty_ledger(),
         tail(
             max_id=1,
-            actor_rows=[
-                actor_row(
-                    "ip:1.1.1.1",
-                    country="SG",
-                    city="Singapore",
-                    last_seen="2026-11-19 01:00:00",
-                )
-            ],
+            day_rows=[day_row("ip:1.1.1.1", page_views=1)],
+            actor_rows=[actor_row("ip:1.1.1.1", country="SG", city="Singapore")],
         ),
     )
     ledger = merge(
         ledger,
         tail(
             max_id=2,
-            actor_rows=[
-                actor_row(
-                    "ip:1.1.1.1",
-                    country="US",
-                    city="Boston",
-                    last_seen="2026-11-19 02:00:00",
-                )
-            ],
+            actor_rows=[actor_row("ip:1.1.1.1", country="US", city="Boston")],
         ),
     )
     actor = ledger["actors"]["ip:1.1.1.1"]
@@ -199,53 +176,46 @@ def test_geo_fields_keep_the_lexicographic_max_like_sql():
 def test_email_unknown_at_first_sight_is_filled_in_later():
     ledger = merge(
         empty_ledger(),
-        tail(max_id=1, actor_rows=[actor_row("u:8", last_seen="2026-11-19 01:00:00")]),
+        tail(max_id=1, day_rows=[day_row("u:8", page_views=1)], actor_rows=[actor_row("u:8")]),
     )
     ledger = merge(
         ledger,
-        tail(
-            max_id=2,
-            actor_rows=[
-                actor_row(
-                    "u:8",
-                    user_id=8,
-                    user_email="a@b.c",
-                    last_seen="2026-11-19 02:00:00",
-                )
-            ],
-        ),
+        tail(max_id=2, actor_rows=[actor_row("u:8", user_id=8, user_email="a@b.c")]),
     )
     actor = ledger["actors"]["u:8"]
     assert actor["user_id"] == 8
     assert actor["user_email"] == "a@b.c"
 
 
-def test_paths_accumulate_and_keep_their_own_last_seen():
+def test_paths_accumulate_within_a_day_and_across_days():
     ledger = merge(
         empty_ledger(),
         tail(
             max_id=1,
-            actor_rows=[actor_row("ip:1.1.1.1", page_views=1, last_seen="2026-11-19 01:00:00")],
-            path_rows=[path_row("ip:1.1.1.1", "/wiki", views=1, dwell_ms=500, last_seen="2026-11-19 01:00:00")],
+            day_rows=[day_row("ip:1.1.1.1", page_views=1)],
+            actor_rows=[actor_row("ip:1.1.1.1")],
+            path_rows=[path_row("ip:1.1.1.1", "/wiki", views=1, dwell_ms=500)],
         ),
     )
     ledger = merge(
         ledger,
         tail(
             max_id=2,
-            actor_rows=[actor_row("ip:1.1.1.1", page_views=1, last_seen="2026-11-19 02:00:00")],
+            day_rows=[day_row("ip:1.1.1.1", page_views=3)],
             path_rows=[
-                path_row("ip:1.1.1.1", "/wiki", views=2, dwell_ms=700, last_seen="2026-11-19 02:00:00"),
-                path_row("ip:1.1.1.1", "/blog", views=1, dwell_ms=100, last_seen="2026-11-19 02:00:00"),
+                path_row("ip:1.1.1.1", "/wiki", views=2, dwell_ms=700),
+                path_row("ip:1.1.1.1", "/blog", views=1, dwell_ms=100),
+                path_row("ip:1.1.1.1", "/wiki", day=YESTERDAY, views=4, dwell_ms=50),
             ],
         ),
     )
-    paths = ledger["actors"]["ip:1.1.1.1"]["paths"]
-    assert paths["/wiki"] == {"views": 3, "dwell_ms": 1200, "last_seen": "2026-11-19 02:00:00"}
-    assert paths["/blog"]["views"] == 1
+    days = ledger["actors"]["ip:1.1.1.1"]["days"]
+    assert days[TODAY]["paths"]["/wiki"] == [3, 1200]
+    assert days[TODAY]["paths"]["/blog"] == [1, 100]
+    assert days[YESTERDAY]["paths"]["/wiki"] == [4, 50]
 
 
-def test_path_row_without_its_actor_row_is_skipped():
+def test_path_row_without_its_day_row_is_skipped():
     ledger = merge(
         empty_ledger(),
         tail(max_id=1, path_rows=[path_row("ip:9.9.9.9", "/wiki", views=1)]),
@@ -259,23 +229,13 @@ def test_days_outside_the_window_are_dropped_and_their_actors_pruned():
         empty_ledger(),
         tail(
             max_id=1,
-            day_rows=[day_row(old_day, "ip:1.1.1.1", 1)],
-            actor_rows=[
-                actor_row("ip:1.1.1.1", page_views=1, last_seen=f"{old_day} 10:00:00")
-            ],
+            day_rows=[day_row("ip:1.1.1.1", day=old_day, page_views=1, last_seen=f"{old_day} 10:00:00")],
+            actor_rows=[actor_row("ip:1.1.1.1", last_seen=f"{old_day} 10:00:00")],
         ),
     )
-    ledger = merge(
-        ledger,
-        tail(max_id=2, day_rows=[day_row(TODAY, "ip:2.2.2.2", 1)]),
-    )
+    ledger = merge(ledger, tail(max_id=2, day_rows=[day_row("ip:2.2.2.2", page_views=1)]))
     # 一个 30 天前的日子，在新的一天推进后被挤出窗口
-    ledger = merge_tail(
-        {"cursor": ledger["cursor"], "daily": ledger["daily"], "actors": ledger["actors"]},
-        tail(max_id=3),
-        today="2026-11-20",
-        window_days=30,
-    )
+    ledger = merge(ledger, tail(max_id=3), today="2026-11-20")
     assert "2026-11-20" not in ledger["daily"]
     assert old_day not in ledger["daily"]
     assert "ip:1.1.1.1" not in ledger["actors"]
@@ -287,9 +247,9 @@ def test_day_rows_outside_the_window_are_ignored_on_entry():
         tail(
             max_id=1,
             day_rows=[
-                day_row("2026-10-01", "ip:1.1.1.1", 5),  # too old
-                day_row("2026-11-20", "ip:1.1.1.1", 5),  # in the future
-                day_row(TODAY, "ip:1.1.1.1", 5),
+                day_row("ip:1.1.1.1", day="2026-10-01", page_views=5),  # too old
+                day_row("ip:1.1.1.1", day="2026-11-20", page_views=5),  # in the future
+                day_row("ip:1.1.1.1", page_views=5),
             ],
         ),
     )
@@ -309,7 +269,11 @@ def test_stored_actors_are_capped_to_the_most_recent():
     ]
     ledger = merge_tail(
         empty_ledger(),
-        tail(max_id=4, day_rows=[day_row(TODAY, row["ident"], 1) for row in rows], actor_rows=rows),
+        tail(
+            max_id=4,
+            day_rows=[day_row(row["ident"], page_views=1, last_seen=row["last_seen"]) for row in rows],
+            actor_rows=rows,
+        ),
         today=TODAY,
         window_days=30,
         max_stored_actors=2,
@@ -329,36 +293,31 @@ def test_merge_does_not_mutate_its_inputs():
         empty_ledger(),
         tail(
             max_id=1,
-            day_rows=[day_row(TODAY, "ip:1.1.1.1", 1)],
-            actor_rows=[actor_row("ip:1.1.1.1", page_views=1, last_seen="2026-11-19 01:00:00")],
-            path_rows=[path_row("ip:1.1.1.1", "/wiki", views=1)],
+            day_rows=[day_row("ip:1.1.1.1", page_views=1, dwell_ms=10)],
+            actor_rows=[actor_row("ip:1.1.1.1", last_seen="2026-11-19 01:00:00")],
+            path_rows=[path_row("ip:1.1.1.1", "/wiki", views=1, dwell_ms=10)],
         ),
-        window_days=30,
     )
     before = copy.deepcopy(ledger)
     payload = tail(
         max_id=2,
-        day_rows=[day_row(TODAY, "ip:1.1.1.1", 1)],
-        actor_rows=[actor_row("ip:1.1.1.1", page_views=1, last_seen="2026-11-19 02:00:00")],
-        path_rows=[path_row("ip:1.1.1.1", "/wiki", views=1, last_seen="2026-11-19 02:00:00")],
+        day_rows=[day_row("ip:1.1.1.1", page_views=1)],
+        actor_rows=[actor_row("ip:1.1.1.1", last_seen="2026-11-19 02:00:00")],
+        path_rows=[path_row("ip:1.1.1.1", "/wiki", views=1)],
     )
+    frozen = copy.deepcopy(payload)
     merged = merge(ledger, payload)
     assert ledger == before
-    assert payload == tail(
-        max_id=2,
-        day_rows=[day_row(TODAY, "ip:1.1.1.1", 1)],
-        actor_rows=[actor_row("ip:1.1.1.1", page_views=1, last_seen="2026-11-19 02:00:00")],
-        path_rows=[path_row("ip:1.1.1.1", "/wiki", views=1, last_seen="2026-11-19 02:00:00")],
-    )
-    assert merged["actors"]["ip:1.1.1.1"]["page_views"] == 2
+    assert payload == frozen
+    assert merged["actors"]["ip:1.1.1.1"]["days"][TODAY]["page_views"] == 2
 
 
 def test_replaying_the_same_tail_counts_twice_by_design():
     """折叠靠 cursor 保证一次，不靠去重；重复投喂必须表现为重复计数。"""
     payload = tail(
         max_id=7,
-        day_rows=[day_row(TODAY, "ip:1.1.1.1", 2)],
-        actor_rows=[actor_row("ip:1.1.1.1", page_views=2, last_seen="2026-11-19 01:00:00")],
+        day_rows=[day_row("ip:1.1.1.1", page_views=2)],
+        actor_rows=[actor_row("ip:1.1.1.1", last_seen="2026-11-19 01:00:00")],
     )
     once = merge(empty_ledger(), payload)
     twice = merge(once, payload)
@@ -367,20 +326,51 @@ def test_replaying_the_same_tail_counts_twice_by_design():
     assert twice["cursor"] == 7
 
 
+def test_render_sums_only_the_requested_window():
+    """7 天视图不能报 30 天累计——这是账本按天存明细的唯一理由。"""
+    ledger = merge(
+        empty_ledger(),
+        tail(
+            max_id=9,
+            day_rows=[
+                day_row("ip:1.1.1.1", day="2026-11-10", page_views=90, dwell_ms=9000),
+                day_row("ip:1.1.1.1", day=TODAY, page_views=10, dwell_ms=1000),
+            ],
+            actor_rows=[actor_row("ip:1.1.1.1", last_seen="2026-11-19 10:00:00")],
+            path_rows=[
+                path_row("ip:1.1.1.1", "/wiki", day="2026-11-10", views=90, dwell_ms=9000),
+                path_row("ip:1.1.1.1", "/wiki", views=10, dwell_ms=1000),
+            ],
+        ),
+    )
+    wide = render_summary(ledger, today=TODAY, window_days=30)
+    narrow = render_summary(ledger, today=TODAY, window_days=7)
+    assert wide["actors"][0]["page_views"] == 100
+    assert wide["actors"][0]["paths"][0]["views"] == 100
+    assert narrow["actors"][0]["page_views"] == 10
+    assert narrow["actors"][0]["paths"][0]["views"] == 10
+    assert narrow["actors"][0]["first_seen"] == "2026-11-19 00:00:00" or narrow["actors"][0]["first_seen"] is None
+
+
 def test_render_summary_sorts_series_and_actors():
     ledger = merge(
         empty_ledger(),
         tail(
             max_id=3,
-            day_rows=[day_row("2026-11-18", "ip:1.1.1.1", 2), day_row(TODAY, "u:8", 4)],
+            day_rows=[
+                day_row("ip:1.1.1.1", day=YESTERDAY, page_views=2, last_seen=f"{YESTERDAY} 10:00:00"),
+                day_row("u:8", page_views=4, last_seen="2026-11-19 10:00:00"),
+            ],
             actor_rows=[
-                actor_row("ip:1.1.1.1", page_views=2, last_seen="2026-11-18 10:00:00"),
-                actor_row("u:8", user_id=8, user_email="a@b.c", page_views=4, last_seen="2026-11-19 10:00:00"),
+                actor_row("ip:1.1.1.1", last_seen=f"{YESTERDAY} 10:00:00"),
+                actor_row("u:8", user_id=8, user_email="a@b.c", last_seen="2026-11-19 10:00:00"),
             ],
         ),
     )
     summary = render_summary(ledger, today=TODAY, window_days=30)
-    assert [day["date"] for day in summary["series"]] == ["2026-11-18", TODAY]
+    assert [day["date"] for day in summary["series"]] == [YESTERDAY, TODAY]
+    assert summary["series"][0]["actors"] == 1
+    assert summary["series"][1]["actors"] == 1
     assert [actor["key"] for actor in summary["actors"]] == ["u:8", "ip:1.1.1.1"]
     assert summary["actors"][0]["paths"] == []
     assert summary["cursor"] == 3
@@ -391,7 +381,16 @@ def test_render_summary_caps_actors_and_flags_truncation():
         actor_row(f"ip:10.0.0.{index}", last_seen=f"2026-11-19 1{index}:00:00")
         for index in range(3)
     ]
-    ledger = merge(empty_ledger(), tail(max_id=3, actor_rows=rows))
+    ledger = merge(
+        empty_ledger(),
+        tail(
+            max_id=3,
+            day_rows=[
+                day_row(row["ident"], page_views=1, last_seen=row["last_seen"]) for row in rows
+            ],
+            actor_rows=rows,
+        ),
+    )
     summary = render_summary(ledger, today=TODAY, window_days=30, max_actors=2)
     assert len(summary["actors"]) == 2
     assert summary["actors"][0]["key"] == "ip:10.0.0.2"  # 12:00 最新
@@ -410,7 +409,8 @@ def test_render_summary_caps_paths_by_dwell_then_views():
         empty_ledger(),
         tail(
             max_id=1,
-            actor_rows=[actor_row("ip:1.1.1.1", page_views=15, last_seen="2026-11-19 01:00:00")],
+            day_rows=[day_row("ip:1.1.1.1", page_views=15)],
+            actor_rows=[actor_row("ip:1.1.1.1", last_seen="2026-11-19 01:00:00")],
             path_rows=paths,
         ),
     )
@@ -423,6 +423,7 @@ def test_render_summary_respects_the_total_path_budget():
         empty_ledger(),
         tail(
             max_id=1,
+            day_rows=[day_row("ip:1.1.1.1", page_views=1), day_row("ip:2.2.2.2", page_views=1)],
             actor_rows=[
                 actor_row("ip:1.1.1.1", last_seen="2026-11-19 02:00:00"),
                 actor_row("ip:2.2.2.2", last_seen="2026-11-19 01:00:00"),

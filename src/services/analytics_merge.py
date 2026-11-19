@@ -23,29 +23,43 @@ Ledger shape::
             "ip:1.2.3.4": {
                 "user_id": None, "user_email": None, "ip": "1.2.3.4",
                 "country": "SG", "region": "Central", "city": "Singapore",
-                "page_views": 12, "dwell_ms": 84000,
-                "first_seen": "2026-11-19 01:00:00",
+                "first_seen": "2026-11-14 01:00:00",
                 "last_seen": "2026-11-19 02:00:00",
-                "paths": {"/wiki": {"views": 5, "dwell_ms": 30000,
-                                    "last_seen": "2026-11-19 02:00:00"}},
+                "days": {
+                    "2026-11-19": {
+                        "page_views": 5, "dwell_ms": 30000,
+                        "first_seen": "2026-11-19 01:00:00",
+                        "last_seen": "2026-11-19 02:00:00",
+                        "paths": {"/wiki": [5, 30000]},
+                    },
+                },
             },
         },
     }
 
-``daily`` keeps the per-day actor key list because the API reports *distinct*
-actors per day, and distinct counts cannot be summed — the set has to be carried.
-The list is small (roughly one key per actor per day) and is trimmed with the
-window.
+Two shapes here are deliberate:
+
+* ``daily`` keeps the per-day actor **key list** because the API reports
+  *distinct* actors per day, and distinct counts cannot be summed — the set has
+  to be carried.
+* Each actor keeps a **per-day** breakdown rather than one running total. The
+  page offers a 7-day and a 30-day window over the same 30-day ledger; a single
+  running total would make the 7-day actor numbers silently report 30-day
+  figures. Per-day buckets are the smallest thing that can answer both windows.
+
+``paths`` inside a day is ``{path: [views, dwell_ms]}`` — a list, not a dict,
+because these records are rewritten on every fold and short keys dominate the
+size of a payload that lives in a single D1 row (2 MB ceiling).
 
 Tail shape (rows already ``GROUP BY``-ed by SQL)::
 
     {
         "max_id": 4230,
-        "day_rows":   [{"day", "ident", "page_views"}],
-        "actor_rows": [{"ident", "user_id", "user_email", "ip", "country",
-                        "region", "city", "page_views", "dwell_ms",
+        "day_rows":   [{"day", "ident", "page_views", "dwell_ms",
                         "first_seen", "last_seen"}],
-        "path_rows":  [{"ident", "path", "views", "dwell_ms", "last_seen"}],
+        "actor_rows": [{"ident", "user_id", "user_email", "ip", "country",
+                        "region", "city", "first_seen", "last_seen"}],
+        "path_rows":  [{"day", "ident", "path", "views", "dwell_ms"}],
     }
 """
 
@@ -97,6 +111,22 @@ def window_start(today: str, window_days: int) -> str:
     return (end - timedelta(days=max(1, int(window_days)) - 1)).isoformat()
 
 
+def _day_bucket(actor: dict, day: str) -> dict:
+    """The actor's bucket for one day, created empty if missing."""
+    days = actor.setdefault("days", {})
+    bucket = days.get(day)
+    if bucket is None:
+        bucket = {
+            "page_views": 0,
+            "dwell_ms": 0,
+            "first_seen": None,
+            "last_seen": None,
+            "paths": {},
+        }
+        days[day] = bucket
+    return bucket
+
+
 def merge_tail(
     ledger: dict,
     tail: dict,
@@ -121,59 +151,59 @@ def merge_tail(
         day = row["day"]
         if day < first_day or day > today:
             continue
+        ident = row["ident"]
         bucket = daily.setdefault(day, {"page_views": 0, "actors": []})
         bucket["page_views"] += _int(row.get("page_views"))
-        ident = row["ident"]
         if ident not in bucket["actors"]:
             bucket["actors"].append(ident)
+
+        target = actors.get(ident)
+        if target is None:
+            # day_rows carry no profile, so the bucket is created here and filled
+            # when the matching actor_rows arrive; an actor with no profile row
+            # is dangling data and is dropped by ``_trim``.
+            target = _new_actor()
+            actors[ident] = target
+        day_bucket = _day_bucket(target, day)
+        day_bucket["page_views"] += _int(row.get("page_views"))
+        day_bucket["dwell_ms"] += _int(row.get("dwell_ms"))
+        day_bucket["first_seen"] = _earlier(day_bucket["first_seen"], row.get("first_seen"))
+        day_bucket["last_seen"] = _later(day_bucket["last_seen"], row.get("last_seen"))
 
     for row in tail.get("actor_rows") or []:
         ident = row["ident"]
         target = actors.get(ident)
         if target is None:
-            target = {
-                "user_id": row.get("user_id"),
-                "user_email": row.get("user_email"),
-                "ip": row.get("ip"),
-                "country": row.get("country"),
-                "region": row.get("region"),
-                "city": row.get("city"),
-                "page_views": 0,
-                "dwell_ms": 0,
-                "first_seen": row.get("first_seen"),
-                "last_seen": row.get("last_seen"),
-                "paths": {},
-            }
+            target = _new_actor()
             actors[ident] = target
-        # Later rows can fill in a name that was unknown when the actor was
-        # first seen, and can move the geo fields forward; MAX() in the old SQL
-        # did the same.
+        # Later rows can fill in a name that was unknown when the actor was first
+        # seen; MAX() in the old SQL did the same.
         target["user_id"] = _int(row.get("user_id")) or target.get("user_id")
         target["user_email"] = row.get("user_email") or target.get("user_email")
         target["ip"] = row.get("ip") or target.get("ip")
         target["country"] = _later(target.get("country"), row.get("country"))
         target["region"] = _later(target.get("region"), row.get("region"))
         target["city"] = _later(target.get("city"), row.get("city"))
-        target["page_views"] = _int(target.get("page_views")) + _int(row.get("page_views"))
-        target["dwell_ms"] = _int(target.get("dwell_ms")) + _int(row.get("dwell_ms"))
         target["first_seen"] = _earlier(target.get("first_seen"), row.get("first_seen"))
         target["last_seen"] = _later(target.get("last_seen"), row.get("last_seen"))
 
     for row in tail.get("path_rows") or []:
+        day = row["day"]
+        if day < first_day or day > today:
+            continue
         ident = row["ident"]
         target = actors.get(ident)
         if target is None:
-            # A path row without its actor row would be dangling data; skip it
+            # A path row without its day row would be dangling data; skip it
             # rather than invent an actor with no identity.
             continue
-        path = row["path"]
-        bucket = target["paths"].get(path)
-        if bucket is None:
-            bucket = {"views": 0, "dwell_ms": 0, "last_seen": row.get("last_seen")}
-            target["paths"][path] = bucket
-        bucket["views"] = _int(bucket.get("views")) + _int(row.get("views"))
-        bucket["dwell_ms"] = _int(bucket.get("dwell_ms")) + _int(row.get("dwell_ms"))
-        bucket["last_seen"] = _later(bucket.get("last_seen"), row.get("last_seen"))
+        paths = _day_bucket(target, day)["paths"]
+        entry = paths.get(row["path"])
+        if entry is None:
+            paths[row["path"]] = [_int(row.get("views")), _int(row.get("dwell_ms"))]
+        else:
+            entry[0] += _int(row.get("views"))
+            entry[1] += _int(row.get("dwell_ms"))
 
     return _trim(
         {"cursor": cursor, "daily": daily, "actors": actors},
@@ -181,6 +211,21 @@ def merge_tail(
         window_days=window_days,
         max_stored_actors=max_stored_actors,
     )
+
+
+def _new_actor() -> dict:
+    """An empty actor record: profile fields still unknown, per-day map empty."""
+    return {
+        "user_id": None,
+        "user_email": None,
+        "ip": None,
+        "country": None,
+        "region": None,
+        "city": None,
+        "first_seen": None,
+        "last_seen": None,
+        "days": {},
+    }
 
 
 def _trim(ledger: dict, *, today: str, window_days: int, max_stored_actors: int) -> dict:
@@ -192,14 +237,20 @@ def _trim(ledger: dict, *, today: str, window_days: int, max_stored_actors: int)
         if first_day <= day <= today
     }
 
-    # Only actors seen inside the window are worth keeping; an identity whose
-    # rows have all aged out would otherwise sit in the ledger forever.
-    live = [
-        ident
-        for ident, actor in ledger["actors"].items()
-        if (actor.get("last_seen") or "") >= f"{first_day} 00:00:00"
-    ]
-    actors = {ident: ledger["actors"][ident] for ident in live}
+    actors: dict = {}
+    for ident, actor in ledger["actors"].items():
+        days = {
+            day: bucket
+            for day, bucket in (actor.get("days") or {}).items()
+            if first_day <= day <= today
+        }
+        if not days:
+            # Nothing left inside the window: the actor has aged out entirely.
+            continue
+        record = dict(actor)
+        record["days"] = days
+        actors[ident] = record
+
     if max_stored_actors > 0 and len(actors) > max_stored_actors:
         keep = sorted(
             actors.keys(),
@@ -222,13 +273,31 @@ def _copy_daily(daily: dict) -> dict:
 
 
 def _copy_actors(actors: dict) -> dict:
-    """Copy the actor records and their nested path buckets."""
+    """Copy the actor records through their nested day and path buckets."""
     copied: dict = {}
     for ident, actor in actors.items():
         record = dict(actor)
-        record["paths"] = {path: dict(bucket) for path, bucket in (actor.get("paths") or {}).items()}
+        record["days"] = {
+            day: {
+                "page_views": _int(bucket.get("page_views")),
+                "dwell_ms": _int(bucket.get("dwell_ms")),
+                "first_seen": bucket.get("first_seen"),
+                "last_seen": bucket.get("last_seen"),
+                "paths": {path: list(entry) for path, entry in (bucket.get("paths") or {}).items()},
+            }
+            for day, bucket in (actor.get("days") or {}).items()
+        }
         copied[ident] = record
     return copied
+
+
+def _window_days(actor: dict, first_day: str, today: str) -> list[dict]:
+    """The actor's day buckets inside ``[first_day, today]``."""
+    return [
+        bucket
+        for day, bucket in (actor.get("days") or {}).items()
+        if first_day <= day <= today
+    ]
 
 
 def render_summary(
@@ -242,7 +311,9 @@ def render_summary(
 ) -> dict:
     """Shape the ledger into the payload the admin page consumes.
 
-    The same ordering and caps the SQL used: series by date, actors by
+    Actor totals are **summed over the requested window**, so the 7-day and
+    30-day views of the same ledger report different (correct) numbers.
+    Ordering and caps match the SQL version: series by date, actors by
     ``last_seen`` descending, paths by dwell then views, with one row past the
     actor cap signalling truncation.
     """
@@ -257,17 +328,15 @@ def render_summary(
         if first_day <= day <= today
     ]
 
-    # Ties on ``last_seen`` are broken by identity, matching the reference
-    # implementation's ``ORDER BY last_seen DESC, ident ASC``: without a
-    # tie-breaker the actor list order depends on dict insertion order and the
-    # two paths diverge on equal timestamps.
     ordered = [
         (ident, actor)
         for ident, actor in ledger["actors"].items()
-        if (actor.get("last_seen") or "") >= f"{first_day} 00:00:00"
+        if _window_days(actor, first_day, today)
+        # Ties on ``last_seen`` break by identity, matching the reference
+        # implementation's ``ORDER BY last_seen DESC, ident ASC``.
     ]
     ordered.sort(key=lambda pair: pair[0])
-    ordered.sort(key=lambda pair: pair[1].get("last_seen") or "", reverse=True)
+    ordered.sort(key=lambda pair: _last_seen(pair[1]) or "", reverse=True)
 
     rows = ordered[: max(0, int(max_actors))]
     has_next = len(ordered) > len(rows)
@@ -275,17 +344,23 @@ def render_summary(
     payload_actors = []
     path_budget = max(0, int(max_path_rows))
     for ident, actor in rows:
-        paths = [
-            {
-                "path": path,
-                "views": _int(bucket.get("views")),
-                "dwell_ms": _int(bucket.get("dwell_ms")),
-            }
-            for path, bucket in (actor.get("paths") or {}).items()
+        buckets = _window_days(actor, first_day, today)
+        paths: dict[str, list[int]] = {}
+        for bucket in buckets:
+            for path, entry in (bucket.get("paths") or {}).items():
+                agg = paths.get(path)
+                if agg is None:
+                    paths[path] = [int(entry[0]), int(entry[1])]
+                else:
+                    agg[0] += int(entry[0])
+                    agg[1] += int(entry[1])
+        path_items = [
+            {"path": path, "views": entry[0], "dwell_ms": entry[1]}
+            for path, entry in paths.items()
         ]
         # dwell 降序、views 降序、path 升序：最后一项是确定性的平局裁决
-        paths.sort(key=lambda item: (-item["dwell_ms"], -item["views"], item["path"]))
-        kept = paths[: max(0, int(max_paths_per_actor))]
+        path_items.sort(key=lambda item: (-item["dwell_ms"], -item["views"], item["path"]))
+        kept = path_items[: max(0, int(max_paths_per_actor))]
         if path_budget:
             kept = kept[:path_budget]
             path_budget -= len(kept)
@@ -300,10 +375,10 @@ def render_summary(
                 "country": actor.get("country"),
                 "region": actor.get("region"),
                 "city": actor.get("city"),
-                "page_views": _int(actor.get("page_views")),
-                "dwell_ms": _int(actor.get("dwell_ms")),
-                "first_seen": actor.get("first_seen"),
-                "last_seen": actor.get("last_seen"),
+                "page_views": sum(_int(bucket.get("page_views")) for bucket in buckets),
+                "dwell_ms": sum(_int(bucket.get("dwell_ms")) for bucket in buckets),
+                "first_seen": _first_seen(buckets),
+                "last_seen": _last_seen(actor),
                 "paths": kept,
             }
         )
@@ -314,3 +389,19 @@ def render_summary(
         "has_next": has_next,
         "cursor": int(ledger.get("cursor") or 0),
     }
+
+
+def _first_seen(buckets: list[dict]) -> str | None:
+    """Earliest in-window event of this actor (day buckets carry their own min)."""
+    seen: str | None = None
+    for bucket in buckets:
+        seen = _earlier(seen, bucket.get("first_seen"))
+    return seen
+
+
+def _last_seen(actor: dict) -> str | None:
+    """Latest stored event of this actor; day buckets and the record agree."""
+    seen = actor.get("last_seen")
+    for bucket in (actor.get("days") or {}).values():
+        seen = _later(seen, bucket.get("last_seen"))
+    return seen

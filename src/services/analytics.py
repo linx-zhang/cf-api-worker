@@ -163,13 +163,20 @@ def _range_clause(tail: bool, alias: str = "") -> str:
 
 
 def day_rows_sql(days: int, *, tail: bool) -> str:
-    """(day, ident) -> page_view count, for the daily series and actor sets."""
+    """(day, ident) -> views, dwell and the day's first/last event.
+
+    Feeds both the series bucket (page views and the distinct-actor key list) and
+    each actor's per-day cell, which is why dwell and the timestamps come along:
+    one scan, two consumers.
+    """
     mod = _modifier()
     return (
         "SELECT "
         f"date(datetime(created_at, '{mod}')) AS day, "
         f"{_ACTOR_EXPR} AS ident, "
-        "SUM(CASE WHEN type = 'page_view' THEN 1 ELSE 0 END) AS page_views "
+        "SUM(CASE WHEN type = 'page_view' THEN 1 ELSE 0 END) AS page_views, "
+        "SUM(COALESCE(duration_ms, 0)) AS dwell_ms, "
+        "MIN(created_at) AS first_seen, MAX(created_at) AS last_seen "
         "FROM activity_events "
         f"WHERE created_at >= {_window_since(days)} "
         "AND (user_id IS NOT NULL OR ip IS NOT NULL)"
@@ -179,13 +186,15 @@ def day_rows_sql(days: int, *, tail: bool) -> str:
 
 
 def actor_rows_sql(days: int, *, tail: bool) -> str:
-    """Per-identity totals, without the page-side ``LIMIT``."""
+    """Per-identity profile fields.
+
+    Counts live in ``day_rows_sql`` (they have to be per-day for the 7/30 split);
+    this query only resolves who the identity is and its overall span.
+    """
     return (
         f"SELECT {_ACTOR_EXPR_E} AS ident, "
         "e.user_id, MAX(u.email) AS user_email, e.ip, "
         "MAX(e.country) AS country, MAX(e.region) AS region, MAX(e.city) AS city, "
-        "SUM(CASE WHEN e.type = 'page_view' THEN 1 ELSE 0 END) AS page_views, "
-        "SUM(COALESCE(e.duration_ms, 0)) AS dwell_ms, "
         "MIN(e.created_at) AS first_seen, MAX(e.created_at) AS last_seen "
         "FROM activity_events e LEFT JOIN users u ON u.id = e.user_id "
         f"WHERE e.created_at >= {_window_since(days)} "
@@ -196,17 +205,23 @@ def actor_rows_sql(days: int, *, tail: bool) -> str:
 
 
 def path_rows_sql(days: int, *, tail: bool) -> str:
-    """Per (identity, path) totals, without the page-side ``LIMIT``."""
+    """Per (day, identity, path) totals.
+
+    Grouped by day so the actor's path breakdown can be summed over whichever
+    window the page asks for; the day is dropped when the ledger renders.
+    """
+    mod = _modifier()
     return (
-        f"SELECT {_ACTOR_EXPR} AS ident, path, "
+        "SELECT "
+        f"date(datetime(created_at, '{mod}')) AS day, "
+        f"{_ACTOR_EXPR} AS ident, path, "
         "SUM(CASE WHEN type = 'page_view' THEN 1 ELSE 0 END) AS views, "
-        "SUM(COALESCE(duration_ms, 0)) AS dwell_ms, "
-        "MAX(created_at) AS last_seen "
+        "SUM(COALESCE(duration_ms, 0)) AS dwell_ms "
         "FROM activity_events "
         f"WHERE created_at >= {_window_since(days)} "
         "AND (user_id IS NOT NULL OR ip IS NOT NULL)"
         f"{_range_clause(tail)} "
-        "GROUP BY ident, path"
+        "GROUP BY day, ident, path"
     )
 
 
@@ -220,8 +235,6 @@ def new_users_today_sql() -> str:
 
 
 async def build_summary(db: Database, days: int) -> dict:
-
-
     """Query D1 and assemble the summary payload (uncached)."""
     today_row = (await db.fetch_one(_today_sql())) or {}
     series_rows = await db.fetch_all(_series_sql(days))

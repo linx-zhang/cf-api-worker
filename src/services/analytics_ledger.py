@@ -46,7 +46,11 @@ from services.analytics_merge import empty_ledger, merge_tail, render_summary
 # Never-expiring ledger. Keep the summary cache on its own key: anything that
 # clears the cache must not be able to erase the ledger silently, and anything
 # that reads the ledger must not be able to mutate the 60s summary.
-LEDGER_KEY = "analytics:ledger:v1"
+#
+# The version suffix is the migration mechanism: a shape change (v1: actor totals
+# only, v2: per-day actor cells so 7-day and 30-day views report their own
+# numbers) lands under a new key, and the next read simply rebuilds.
+LEDGER_KEY = "analytics:ledger:v2"
 SUMMARY_KEY_PREFIX = "analytics:summary:v1"
 
 _TAIL_EMPTY = {"day_rows": [], "actor_rows": [], "path_rows": []}
