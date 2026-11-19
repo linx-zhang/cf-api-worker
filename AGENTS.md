@@ -74,7 +74,7 @@ $env:Path = "C:\Users\LinxZhang\.local\bin;C:\Program Files\nodejs;C:\Windows\Sy
 $env:UV_PYTHON = "3.14"
 Set-Location -LiteralPath "D:\this_code\cloudflare-workers\api-worker"
 
-uv run --frozen pytest -q              # 111 passed
+uv run --frozen pytest -q              # 113 passed
 uv run --frozen ruff check src tests   # All checks passed
 
 # 仅在新增 migrations/*.sql 时；不要加 --yes（会吐 help 并崩溃），改用 y 管道
@@ -100,7 +100,7 @@ Invoke-WebRequest "https://api-worker.linx-zhang.workers.dev/api/posts?limit=3&o
 - `src/api/models.py` 是契约常量真源；前端 `src/constants.ts` 是手抄副本，前端 CI 的 `scripts/check-contract.mjs` 会 clone 本仓库比对——**改常量先 push 本仓库**。
 - 纯规则（时间校验、权限码矩阵）抽在 `src/core/`，测试在 `tests/` 直跑 pytest，不碰 workerd。
 - 定时任务在 `src/tasks/`，日更按 activity 保留 → cache 清理 → memos 墓碑 → 分析账本的顺序挂在 `cron.py`；小时触发器只跑账本。
-- **分析页读成本**：`services/analytics_ledger.py` 把 30 天窗口折成一行账本存在 `cache_entries`（key `analytics:ledger:v1`，`timeout=None`），页面读取 = 账本 + `id > cursor AND id <= MAX(id)` 的尾巴，内存折叠后渲染，暖读不写库；尾巴超过 `ANALYTICS_MAX_TAIL_ROWS`（500）改走全量重建。`services/analytics.py` 的 `build_summary` 只是参考实现，`tests/test_analytics_ledger.py` 断言两条路径逐字段相等。窗口按**北京展示日**算（`_window_since`），不是滚动 30×24h，改这里要同步改账本裁剪。
+- **分析页读成本**：`services/analytics_ledger.py` 把 30 天窗口折成一行账本存在 `cache_entries`（key `analytics:ledger:v2`，`timeout=None`），页面读取 = 账本 + `id > cursor AND id <= MAX(id)` 的尾巴，内存折叠后渲染，暖读不写库；尾巴超过 `ANALYTICS_MAX_TAIL_ROWS`（500）改走全量重建。`services/analytics.py` 的 `build_summary` 只是参考实现，`tests/test_analytics_ledger.py` 对 `days=7` 与 `days=30` 都断言两条路径逐字段相等。账本里访客明细按**天**存（`actors[ident].days[day]`），所以两个窗口各自求和、不会把 30 天累计报进 7 天视图；改结构要换 key 后缀（v1 是只有窗口累计的旧形状）。窗口按**北京展示日**算（`_window_since`），不是滚动 30×24h，改这里要同步改账本裁剪。
 
 完整的上线清单、契约 10 项对照表、已知缺口，见前端仓库根目录 `AGENTS.md`。
 
