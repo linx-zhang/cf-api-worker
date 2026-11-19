@@ -1,20 +1,33 @@
 """Cron entry point: the one place ``entry.py`` calls on a cron trigger.
 
-Wrangler fires a single trigger today (``15 18 * * *`` in ``wrangler.jsonc``),
-so every invocation runs the same job set. Adding a second trigger means
-matching on the cron expression here rather than in ``entry.py``.
+Wrangler fires two triggers today (``wrangler.jsonc``):
+
+- ``15 18 * * *`` — the nightly maintenance set (retention, cache purge, memo
+  tombstones) plus one ledger fold.
+- ``0 * * * *`` — hourly ledger fold only. Everything else is daily work and
+  would be pure waste twelve times a day.
+
+So this module matches on the cron expression; ``entry.py`` stays dumb.
+
+The ledger fold is the only job whose *read* cost matters at request time: it
+runs the three tail aggregates, which scan exactly the rows that arrived since
+the last fold.
 """
 
 from __future__ import annotations
 
 from infra.db import Database
 from tasks.activity_retention import ACTIVITY_RETENTION_DAYS, purge_old_activity
+from tasks.analytics_ledger import persist_analytics_ledger
 from tasks.cache_cleanup import purge_expired_cache
 from tasks.memo_tombstone import MEMO_TOMBSTONE_DAYS, purge_memo_tombstones
 
+# Keep in sync with ``wrangler.jsonc`` -> triggers.crons.
+HOURLY_LEDGER_CRON = "0 * * * *"
+
 
 async def run_cron(env, cron: str = "cron") -> dict[str, int]:
-    """Run all cron jobs; returns the row count each job removed.
+    """Run the job set that belongs to this trigger; returns per-job counts.
 
     ``env`` is the entrypoint's own environment: the ``env`` argument of the
     runtime's ``scheduled()`` handler is not guaranteed to be populated on
@@ -25,6 +38,17 @@ async def run_cron(env, cron: str = "cron") -> dict[str, int]:
     leaves a trace.
     """
     db = Database(env.DB)
+
+    # 小时级触发器只做账本折叠：其它任务是日更，每小时跑一遍纯属浪费
+    if (cron or "").strip() == HOURLY_LEDGER_CRON:
+        ledger = await persist_analytics_ledger(db)
+        print(
+            f"analytics ledger ({cron}): folded {ledger['folded']} rows, "
+            f"cursor {ledger['cursor']}, {ledger['days']} days, "
+            f"{ledger['actors']} actors"
+            + (" (rebuilt)" if ledger["rebuilt"] else "")
+        )
+        return {"analytics_ledger_rows": int(ledger["folded"] or 0)}
 
     deleted = await purge_old_activity(db, days=ACTIVITY_RETENTION_DAYS)
     print(
@@ -42,8 +66,18 @@ async def run_cron(env, cron: str = "cron") -> dict[str, int]:
         f"soft-deleted before -{MEMO_TOMBSTONE_DAYS} days"
     )
 
+    # 清理跑完再折叠：已经被删除的旧行不该再进入账本
+    ledger = await persist_analytics_ledger(db)
+    print(
+        f"analytics ledger ({cron}): folded {ledger['folded']} rows, "
+        f"cursor {ledger['cursor']}, {ledger['days']} days, "
+        f"{ledger['actors']} actors"
+        + (" (rebuilt)" if ledger["rebuilt"] else "")
+    )
+
     return {
         "activity_events": deleted,
         "cache_entries": purged,
         "memos": tombstones,
+        "analytics_ledger_rows": int(ledger["folded"] or 0),
     }

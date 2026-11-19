@@ -56,7 +56,7 @@ from core.permissions import (
 from core.utils import sqlite_timestamp
 from infra.db import Database
 from infra.passwords import generate_temporary_password, hash_password
-from services.analytics import load_summary
+from services.analytics_ledger import load_summary
 from services.invite_codes import (
     delete_unused,
     generate_invite_codes,
