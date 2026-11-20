@@ -2,10 +2,18 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, status
+import hashlib
+
+from fastapi import APIRouter, Depends, Request, status
 from fastapi.responses import JSONResponse
 
-from api.deps import get_current_user, get_db, get_settings, require_permission
+from api.deps import (
+    client_ip,
+    get_current_user,
+    get_db,
+    get_settings,
+    require_permission,
+)
 from api.models import (
     PROFILE_FIELDS,
     LoginIn,
@@ -20,13 +28,17 @@ from core.constants import (
     CODE_EMAIL_EXISTS,
     CODE_INVALID_CREDENTIALS,
     CODE_INVALID_INVITE_CODE,
+    CODE_RATE_LIMITED,
     DETAIL_EMAIL_EXISTS,
     DETAIL_INVALID_CREDENTIALS,
     DETAIL_INVITE_CODE_CONFLICT,
     DETAIL_INVITE_CODE_INVALID,
+    DETAIL_LOGIN_RATE_LIMITED,
 )
 from core.permissions import ACCOUNT_UPDATE_SELF, permissions_for_role
 from core.security import create_access_token
+from core.utils import utc_now
+from infra.cache import Cache
 from infra.config import Settings
 from infra.db import Database
 from infra.passwords import hash_password, verify_password
@@ -37,6 +49,38 @@ router = APIRouter()
 _USER_COLUMNS = (
     "id, email, role, created_at, nickname, first_name, last_name, avatar_url"
 )
+
+# 登录是唯一验证口令的口子，得有人数限制：按 IP 和账号各开一个固定窗口桶。
+# 计数沿用 cache.record_hit 的「一次命中一行、过期靠现有 cron 清」，不落新表。
+LOGIN_WINDOW_SECONDS = 15 * 60
+LOGIN_IP_LIMIT = 10
+LOGIN_ACCOUNT_LIMIT = 5
+
+
+def _cache(db: Database) -> Cache:
+    return Cache(db, namespace="auth")
+
+
+def _login_window() -> tuple[str, int]:
+    """Current window id plus the seconds left in it, same shape as clips."""
+    now = int(utc_now().timestamp())
+    stamp = now // LOGIN_WINDOW_SECONDS
+    remaining = LOGIN_WINDOW_SECONDS - now % LOGIN_WINDOW_SECONDS
+    return str(stamp), remaining + 1
+
+
+def _account_bucket(email: str) -> str:
+    """Hash the email so the key stays short and the cache row is not a mailbox."""
+    return hashlib.sha256(email.strip().lower().encode("utf-8")).hexdigest()[:32]
+
+
+def _login_limited(retry_after: int) -> ApiError:
+    return ApiError(
+        CODE_RATE_LIMITED,
+        DETAIL_LOGIN_RATE_LIMITED,
+        status.HTTP_429_TOO_MANY_REQUESTS,
+        headers={"Retry-After": str(retry_after)},
+    )
 
 
 def _token_response(user: dict, settings: Settings) -> dict:
@@ -111,9 +155,22 @@ async def register(
 @router.post("/login")
 async def login(
     payload: LoginIn,
+    request: Request,
     db: Database = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> JSONResponse:
+    # 先计数再查库：超限的请求连一次用户查询都不做，顺便让爆破拿不到时序差异。
+    cache = _cache(db)
+    window, ttl = _login_window()
+    ip = client_ip(request)
+    if ip is not None:
+        hits = await cache.record_hit(f"login:ip:{ip}:{window}", ttl)
+        if hits > LOGIN_IP_LIMIT:
+            raise _login_limited(ttl)
+    hits = await cache.record_hit(f"login:acct:{_account_bucket(payload.email)}:{window}", ttl)
+    if hits > LOGIN_ACCOUNT_LIMIT:
+        raise _login_limited(ttl)
+
     user = await db.fetch_one(
         f"SELECT {_USER_COLUMNS}, password_hash FROM users "
         "WHERE email = ? AND deleted_at IS NULL",

@@ -137,6 +137,7 @@ Base URL：`https://linx-api-78i.pages.dev`（生产）。CORS `allow_origins=["
 | `POST /activity/visitor` | 每 IP 30 秒一批；同上 | 429 `rate_limited` + `Retry-After` |
 | `POST /clips` | 每用户 10 秒一条（cache 里的 `throttle:<id>`） | 429 `rate_limited` + `Retry-After: 10` |
 | `GET /clips/{code}` | 每分钟每 IP 60 次、每 code 120 次（固定一分钟窗口） | 429 `rate_limited` + `Retry-After` |
+| `POST /auth/login` | 15 分钟固定窗口，每 IP 10 次、每账号 5 次（含成功登录，计数在查库前） | 429 `rate_limited` + `Retry-After` |
 | `GET /admin/analytics/summary` | 结果缓存 60 秒（key `analytics:summary:v1:<days>`）；缓存未命中时读账本 `analytics:ledger:v2` + 折叠 `cursor < id <= MAX(id)` 的尾巴，尾巴 > 500 行走全量重建 | 不报错，读到旧值 |
 
 ## 错误码

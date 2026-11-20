@@ -116,18 +116,22 @@ class Client:
         token: str | None = None,
         body=None,
         authorization: str | None = None,
+        headers: dict[str, str] | None = None,
     ):
-        headers = {"host": "testserver"}
+        request_headers = {"host": "testserver"}
         payload = b""
         if body is not None:
             payload = json.dumps(body).encode("utf-8")
-            headers["content-type"] = "application/json"
-            headers["content-length"] = str(len(payload))
+            request_headers["content-type"] = "application/json"
+            request_headers["content-length"] = str(len(payload))
         if authorization is not None:
             # 原样写进头里：给「scheme 不是 Bearer」这类用例用
-            headers["authorization"] = authorization
+            request_headers["authorization"] = authorization
         elif token is not None:
-            headers["authorization"] = f"Bearer {token}"
+            request_headers["authorization"] = f"Bearer {token}"
+        # 用例自定义头（如 cf-connecting-ip）最后合并，保证能覆盖默认值
+        if headers:
+            request_headers.update({k.lower(): v for k, v in headers.items()})
 
         parts = urlsplit(path)
         scope = {
@@ -140,7 +144,9 @@ class Client:
             "raw_path": parts.path.encode("utf-8"),
             "query_string": parts.query.encode("utf-8"),
             "root_path": "",
-            "headers": [(k.lower().encode(), v.encode()) for k, v in headers.items()],
+            "headers": [
+                (k.lower().encode(), v.encode()) for k, v in request_headers.items()
+            ],
             "server": ("testserver", 80),
             "client": ("127.0.0.1", 54321),
             # 真实运行时这里是 Worker env；用例已覆盖 get_settings/get_db，读不到它
@@ -167,11 +173,27 @@ class Client:
         asyncio.run(app(scope, receive, send))
         return ApiResponse(status_holder.get("status", 0), b"".join(chunks))
 
-    def get(self, path: str, token: str | None = None, *, authorization: str | None = None):
-        return self.request("GET", path, token=token, authorization=authorization)
+    def get(
+        self,
+        path: str,
+        token: str | None = None,
+        *,
+        authorization: str | None = None,
+        headers: dict[str, str] | None = None,
+    ):
+        return self.request(
+            "GET", path, token=token, authorization=authorization, headers=headers
+        )
 
-    def post(self, path: str, body=None, token: str | None = None):
-        return self.request("POST", path, token=token, body=body)
+    def post(
+        self,
+        path: str,
+        body=None,
+        token: str | None = None,
+        *,
+        headers: dict[str, str] | None = None,
+    ):
+        return self.request("POST", path, token=token, body=body, headers=headers)
 
     def patch(self, path: str, body=None, token: str | None = None):
         return self.request("PATCH", path, token=token, body=body)

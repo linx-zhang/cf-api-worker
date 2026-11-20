@@ -17,8 +17,10 @@ from api.routers.admin import _ensure_role_change_allowed
 from core.constants import (
     CODE_CANNOT_CHANGE_OWN_ROLE,
     CODE_FORBIDDEN,
+    CODE_INVALID_CREDENTIALS,
     CODE_LAST_ADMIN_REQUIRED,
     CODE_NOT_FOUND,
+    CODE_RATE_LIMITED,
     CODE_UNAUTHORIZED,
     CODE_VALIDATION_ERROR,
 )
@@ -277,3 +279,44 @@ def test_list_memos_only_returns_the_callers_rows(api):
     api.seed_memo(stranger, "别人的")
     response = api.get("/api/memos", token=token)
     assert [row["body"] for row in response.data["items"]] == ["我的"]
+
+
+# ---- 登录限流 ---------------------------------------------------------------
+
+LOGIN = "/api/auth/login"
+
+
+def test_login_locks_one_account_after_five_failed_attempts(api):
+    api.seed_user("victim@example.com")
+    body = {"email": "victim@example.com", "password": "wrong-password"}
+    for _ in range(5):
+        response = api.post(LOGIN, body)
+        assert response.status == 401
+        assert response.code == CODE_INVALID_CREDENTIALS
+
+    response = api.post(LOGIN, body)
+    assert response.status == 429
+    assert response.code == CODE_RATE_LIMITED
+    # 限流在查库之前触发，所以同一个账号换个密码也照样被挡
+    assert api.post(LOGIN, {**body, "password": "another-wrong"}).status == 429
+
+
+def test_login_ip_bucket_caps_many_accounts(api):
+    # 每个邮箱自己的桶都只有 1 次，先撞到的必然是 IP 桶的第 10 次。
+    # Cloudflare 一定会带 cf-connecting-ip，这里显式给同一个 IP。
+    ip_headers = {"cf-connecting-ip": "203.0.113.7"}
+    for index in range(10):
+        response = api.post(
+            LOGIN,
+            {"email": f"nobody{index}@example.com", "password": "x"},
+            headers=ip_headers,
+        )
+        assert response.status == 401
+
+    response = api.post(
+        LOGIN,
+        {"email": "nobody10@example.com", "password": "x"},
+        headers=ip_headers,
+    )
+    assert response.status == 429
+    assert response.code == CODE_RATE_LIMITED
