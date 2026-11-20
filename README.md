@@ -1,11 +1,11 @@
 <!-- [LLM SYSTEM INSTRUCTION & CONTEXT]
 Project: api-worker - a small blog/reporting backend running on Cloudflare Workers in Python.
 Stack: Cloudflare Workers (python_workers compat flag, Pyodide runtime) + FastAPI (pure-ASGI glue) + D1 (SQLite) + PyJWT + wrangler 4. No ORM: every query is hand-written SQL through src/infra/db.py.
-Layout: src/entry.py (Worker entry, Default entrypoint exported for wrangler) -> src/api/ (app.py router wiring, deps.py auth/permissions/client ip, models.py Pydantic schemas, responses.py envelope + error handlers, routers/) -> src/services/ (business rules that need SQL: invite_codes.py) -> src/core/ (permissions.py role->codes map, constants.py response codes/details, security.py JWT + PBKDF2, utils.py helpers) -> src/infra/ (db.py D1 wrapper, config.py env settings, passwords.py WebCrypto hashing) -> src/tasks/ (cron.py cron entry, activity_retention.py purge job).
+Layout: src/entry.py (Worker entry, Default entrypoint exported for wrangler) -> src/api/ (app.py router wiring, deps.py auth/permissions/client ip, models.py Pydantic schemas, responses.py envelope + error handlers, routers/) -> src/services/ (business rules that need SQL: invite_codes.py, visitor_paths.py, analytics.py for the read SQL, analytics_ledger.py for the ledger orchestration, analytics_merge.py for pure folding/rendering) -> src/core/ (permissions.py role->codes map, constants.py response codes/details, security.py JWT + PBKDF2, utils.py helpers) -> src/infra/ (db.py D1 wrapper, config.py env settings, passwords.py WebCrypto hashing) -> src/tasks/ (cron.py cron entry, activity_retention.py purge, cache_cleanup.py expired rows, memo_tombstone.py 90-day hard delete, analytics_ledger.py hourly fold).
 Envelope: every response is {"code": str, "detail": str, "data": any}; errors are raised as ApiError(code, detail, status) and rendered by handlers in api/responses.py (422 RequestValidationError, 404 not_found, 405 method_not_allowed, 500 internal_error).
 Routes: the endpoint table (method / path / auth / request / response) lives in docs/api.md and is the source of truth; `python scripts/check-api-doc.py` diffs it against the decorators. Quick list: GET /; POST /auth/register; POST /auth/login; GET /auth/me; PATCH /auth/me; POST /auth/logout; GET /posts (filters: q title fuzzy, author author fuzzy, author_id exact author); GET /posts/{post_id}; GET /posts/{post_id}/neighbors; POST /posts; POST /posts/batch-delete; PATCH /posts/{post_id}; DELETE /posts/{post_id}; GET /posts/{post_id}/comments; POST /posts/{post_id}/comments; DELETE /comments/{comment_id}; GET /memos; GET /memos/summary; POST /memos; PATCH /memos/{memo_id}; DELETE /memos/{memo_id}; POST /clips; GET /clips/{code}; DELETE /clips/{code}; POST /activity; POST /activity/visitor; POST|GET /admin/invite-codes; DELETE /admin/invite-codes/{code}; GET /admin/users; PATCH /admin/users/{user_id}; POST /admin/users/{user_id}/reset-password; DELETE /admin/users/{user_id}; GET /admin/activity; GET /admin/analytics/summary.
 Permissions (resource:action:scope): user and internal both hold account:read:self, account:update:self, post:create:any, post:update:own, post:delete:own, comment:create:any, comment:delete:own, activity:write:self. admin holds those plus post:update:any, post:delete:any, comment:delete:any, invite_code:create:any, invite_code:read:any, invite_code:delete:any, user:read:any, user:update:any, user:delete:any, user:reset_password:any, activity:read:any. PUBLIC (never returned to clients) covers post:read:any and comment:read:any. /clips adds clip:delete:own for every signed-in role and clip:delete:any for admin, while POST /clips only needs a token (same shape as /memos); GET /clips/{code} is public because the code itself is the capability, and no route lists the stored snippets — so reads carry their own budget instead: 60/min per client ip and 120/min per code, fixed one-minute windows, answering 429 rate_limited with Retry-After. /memos is self-scoped and adds no permission code: every memo route requires a token and takes the owner from it, never from the request.
-Migrations (migrations/, applied in filename order via wrangler d1 migrations apply): 0001_init.sql, 0002_invite_codes_created_by.sql, 0003_user_soft_delete.sql, 0004_activity_events.sql, 0005_user_profile.sql, 0006_user_password_reset.sql, 0007_user_last_active.sql, 0008_invite_code_note.sql, 0009_token_invalidated_at.sql, 0010_list_order_indexes.sql, 0011_db_cache.sql, 0012_activity_anonymous.sql, 0013_memos.sql, 0014_memo_due_utc.sql.
+Migrations (migrations/, applied in filename order via wrangler d1 migrations apply): 0001_init.sql, 0002_invite_codes_created_by.sql, 0003_user_soft_delete.sql, 0004_activity_events.sql, 0005_user_profile.sql, 0006_user_password_reset.sql, 0007_user_last_active.sql, 0008_invite_code_note.sql, 0009_token_invalidated_at.sql, 0010_list_order_indexes.sql, 0011_db_cache.sql, 0012_activity_anonymous.sql, 0013_memos.sql, 0014_memo_due_utc.sql, 0015_live_partial_indexes.sql.
 Schema: migrations/ is the single source of truth for the database shape. docs/schema.md is a GENERATED view of the live D1 structure (tables, columns, types, nullability, defaults, PK, indexes, foreign keys) meant for humans and LLMs to read, because there is no ORM to describe the tables in code. Never hand-edit docs/schema.md; regenerate it with `npm run schema` after every migration and commit both.
 Maintenance: after any context reset, read the "Maintenance checklist" section before changing the schema or adding a route - migrations, docs/schema.md, docs/api.md and the README migration table have to move together.
 D1 binding: env.DB -> database name api-worker-db (configured in wrangler.jsonc).
@@ -49,6 +49,10 @@ src/
       clips.py              shareable clipboard snippets on the D1 cache (24h TTL)
   services/
     invite_codes.py         invite code generation, listing and deletion
+    visitor_paths.py        public-path allow list for anonymous visitors
+    analytics.py            analytics SQL + the reference implementation build_summary
+    analytics_ledger.py     read path: ledger row + tail fold, rebuild, hourly persist
+    analytics_merge.py      pure folding/rendering (no DB, no clock)
   core/
     permissions.py          permission codes and role -> codes mapping
     constants.py            response codes and detail strings (public contract)
@@ -63,6 +67,8 @@ src/
     cron.py                 cron entry called by entry.py's scheduled()
     activity_retention.py   purge of activity_events older than 30 days
     cache_cleanup.py        purge of expired cache_entries rows
+    memo_tombstone.py       hard delete of memos soft-deleted 90+ days ago
+    analytics_ledger.py     hourly fold of the analytics ledger row
 migrations/                 numbered SQL migrations applied by wrangler
 docs/
   schema.md                 generated dump of the live D1 shape (`npm run schema`)
@@ -156,8 +162,36 @@ Two numbers need their meaning stated, because both are easy to misread:
 - `dwell_ms` is the sum of `duration_ms` from `page_leave`. It is observed time, not wall-clock: a tab killed without `pagehide` sends no leave event and contributes nothing.
 - Dates are bucketed with `+8 hours` (`ANALYTICS_TZ_OFFSET_HOURS`), because every stored timestamp is UTC and "today" here means Beijing time. Without the shift every daily number would be 8 hours off.
 
-The payload is cached for 60 seconds (`Cache`, key `analytics:summary:v1:<days>`), capped at 60 actors and 8 pages per actor, and reports `has_next` when more identities exist than were returned.
-Rows are not kept forever: a Cron Trigger (`15 18 * * *` UTC, configured under `triggers.crons` in `wrangler.jsonc`) calls `scheduled()` in `src/entry.py` (the method name is fixed by the Workers runtime, like `fetch()`), which delegates one line to `run_cron()` in `src/tasks/cron.py`; that runs the daily `activity_events` purge and deletes rows whose server receive time (`created_at`) is older than 30 days. Deletion runs in batches of 5000 (`src/tasks/activity_retention.py`) so one statement never has to carry a full sweep, and age is measured on `created_at` rather than the client-supplied `ts`.
+### The ledger: how a read stops scanning the event table
+
+Querying the raw table was the original shape: every request scanned the 30-day window twice (once for `days=7`, once for `days=30`), about 20–30k rows per request. The admin page refreshed often enough that the free 5M rows-read/day budget would have run out on its own traffic.
+
+So the read path is now **one ledger row plus a tail**. The ledger lives in `cache_entries` under `analytics:ledger:v2` with `timeout=None`, is written by the hourly cron (`0 * * * *`), and holds:
+
+- `cursor` — the largest `activity_events.id` already folded in;
+- `daily[day]` — page views and the distinct actor keys for that Beijing display day;
+- `actors[ident].days[day]` — per-identity, per-day views, dwell, first/last seen and the path breakdown, because the page serves both a 7-day and a 30-day window and each has to report its own totals.
+
+A request then:
+
+1. reads the ledger row;
+2. computes `MAX(id)` and folds the rows with `cursor < id <= MAX(id)` in memory (`services/analytics_merge.py`, pure functions — no DB, no clock);
+3. sums only the day buckets inside the requested window and renders.
+
+A **warm read writes nothing**, so concurrent readers never race and a refresh burst costs one cache row plus a small tail. The ledger is written only by the hourly cron, and on a cold read (no ledger), a corrupt ledger, or a tail longer than `ANALYTICS_MAX_TAIL_ROWS` (500 rows) the read falls back to `build_summary` — the reference implementation that reads the whole window — and stores the result. `tests/test_analytics_ledger.py` asserts the ledger path and the reference path agree field by field for **both** `days=7` and `days=30`.
+
+`LEDGER_KEY` carries its shape version (`v1` was window-total-only and reported 30-day totals in the 7-day view; `v2` is per-day) — bumping the suffix is the migration, since a shape change lands under a new key and the next read simply rebuilds.
+
+Measured on the live worker (15 consecutive samples, one minute apart):
+
+| view | median | range | identities | series total |
+| --- | --- | --- | --- | --- |
+| `days=7` | 651 ms | 345–3144 ms | 25 | 1029 |
+| `days=30` | 944 ms | 299–2690 ms | 44 | 1586 |
+
+All 15 requests succeeded. The spread is Python Worker cold start, not data volume: the same queries, with unchanged data, moved between 0.3 s and 3.1 s. The ledger row itself is about **37 KB** at 45 identities / 11 day buckets. The 60-second summary cache (`analytics:summary:v1:<days>`) still sits in front of the ledger, so a page refresh usually costs neither the tail nor the render.
+
+Rows are not kept forever: a Cron Trigger (`15 18 * * *` UTC, configured under `triggers.crons` in `wrangler.jsonc`) calls `scheduled()` in `src/entry.py` (the method name is fixed by the Workers runtime, like `fetch()`), which delegates one line to `run_cron()` in `src/tasks/cron.py`; that runs the activity purge, the cache purge, the memo tombstone hard delete and one ledger fold. Retention deletes rows whose server receive time (`created_at`) is older than 30 days, in batches of 5000 (`src/tasks/activity_retention.py`) so one statement never has to carry a full sweep, and age is measured on `created_at` rather than the client-supplied `ts`.
 
 Because the purge deletes rows, "last active" is cached on `users.last_active_at` instead of being derived from `activity_events`: every accepted batch runs one `UPDATE ... MAX(...)` on the user row, so the value only moves forward, and `/admin/users` reads the column directly (no per-user subquery over the activity table). Deleting old events therefore never makes a dormant account look like it was never active.
 
@@ -192,6 +226,7 @@ D1 binding `DB` -> database `api-worker-db` (see `wrangler.jsonc`). Migrations l
 | `0012_activity_anonymous.sql` | rebuilds `activity_events`: `user_id` nullable (anonymous visitors), adds `ip`, `country`, `region`, `city`, adds the `(ip, created_at)` throttle index |
 | `0013_memos.sql` | `memos`: per-user notes/todos. `due_at` is a UTC deadline instant (`YYYY-MM-DD HH:MM:SS`) used only to highlight rows (no reminders are sent); `done_at` is the most recent completion and is cleared when the box is unticked; `deleted_at` keeps deletion recoverable. Indexes `(user_id, created_at, id)` for the default list and `(user_id, done, created_at)` for the 待办/已完成 split |
 | `0014_memo_due_utc.sql` | rewrites the date-only `memos.due_at` (`YYYY-MM-DD`) into the UTC datetime the rest of the schema already uses: the old value was the Beijing day, so it becomes `<day> 15:59:59` (local 23:59:59 in UTC). Idempotent — only rows still 10 characters long are touched |
+| `0015_live_partial_indexes.sql` | partial indexes over live rows only (`idx_posts_live_created_id`, `idx_memos_live_user_created`, `idx_memos_live_user_done`, `idx_comments_live_post_created_id`); the old full indexes stay because filtered queries (author/q/done) still use them |
 
 Soft deletion is used for users, posts and comments (`deleted_at`); reads filter it out and deleted authors render as `已注销`. Deleting a post also soft deletes its comments.
 
@@ -286,7 +321,7 @@ Update all three of: `src/api/app.py` (router wiring), `docs/api.md` (the endpoi
 
 **Adding a cron job**
 
-Wire it in `src/tasks/cron.py` (`run_cron`), keep the job body in its own `src/tasks/<name>.py`, and print one line per run: the scheduled handler's return value is discarded, so Worker logs are the only trace a run leaves. The cron set today is `activity_retention` (30-day window) and `cache_cleanup` (expired `cache_entries`), and `run_cron` returns `{"activity_events": n, "cache_entries": m}`.
+Wire it in `src/tasks/cron.py` (`run_cron`), keep the job body in its own `src/tasks/<name>.py`, and print one line per run: the scheduled handler's return value is discarded, so Worker logs are the only trace a run leaves. There are two triggers: `15 18 * * *` runs `activity_retention` → `cache_cleanup` → `memo_tombstone` → one analytics ledger fold; `0 * * * *` runs **only** the ledger fold (`src/tasks/analytics_ledger.py:refresh_ledger`), which is what keeps the read path's tail short all day. The daily run returns counts per phase.
 
 **Publishing a blog post**
 

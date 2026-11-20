@@ -61,6 +61,7 @@
 
 索引：
 
+- `idx_comments_live_post_created_id`（普通）：``
 - `idx_comments_parent_id`（普通）：`parent_id`
 - `idx_comments_post_created_id`（普通）：`post_id, created_at, id`
 
@@ -109,6 +110,8 @@
 
 索引：
 
+- `idx_memos_live_user_created`（普通）：``
+- `idx_memos_live_user_done`（普通）：``
 - `idx_memos_user_created`（普通）：`user_id, created_at, id`
 - `idx_memos_user_done`（普通）：`user_id, done, created_at`
 
@@ -132,6 +135,7 @@
 
 - `idx_posts_author_id`（普通）：`author_id`
 - `idx_posts_created_id`（普通）：`created_at, id`
+- `idx_posts_live_created_id`（普通）：``
 - `idx_posts_title`（普通）：`title`
 
 外键：
