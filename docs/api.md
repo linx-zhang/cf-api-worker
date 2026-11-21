@@ -28,7 +28,7 @@ Base URL：`https://linx-api-78i.pages.dev`（生产）。CORS `allow_origins=["
 **时间**：服务端时间戳统一 `TEXT`，`datetime('now')` 写入，即 UTC；本地化只在前端做。
 `/api/activity` 的 `ts` 是客户端 epoch 毫秒：允许 30 天内、未来不超过 5 分钟。
 
-**软删除**：`users` / `posts` / `comments` / `memos` 都有 `deleted_at`，读取一律带 `deleted_at IS NULL`；
+**软删除**：`users` / `posts` / `comments` / `memos` / `consumable_items` / `consumable_cycles` 都有 `deleted_at`，读取一律带 `deleted_at IS NULL`；
 删帖连带软删它的评论，删评论连带软删回复子树。
 
 ## 端点表
@@ -61,6 +61,14 @@ Base URL：`https://linx-api-78i.pages.dev`（生产）。CORS `allow_origins=["
 | POST | `/api/memos` | 登录 | `{body 1-2000, due_at? "YYYY-MM-DD HH:MM:SS"}`（UTC） | 201 `MemoOut` |
 | PATCH | `/api/memos/{memo_id}` | 登录 | `{body?, done?, due_at?}`，至少一项 | `MemoOut` |
 | DELETE | `/api/memos/{memo_id}` | 登录 | — | `{id}` |
+| GET | `/api/consumables` | 登录 | `today?: "YYYY-MM-DD"`（客户端本地今天，缺省用 UTC） | `{items: ConsumableOut[]}`（不分页） |
+| POST | `/api/consumables` | 登录 | `{name 1-40, category?, unit? ≤8, quantity? ≥0, lead_days? 0-60, note? ≤200, started_on?, expected_days? 1-3650}`；同时开第一轮 | 201 `ConsumableOut` |
+| PATCH | `/api/consumables/{item_id}` | 本人 | `{name?, category?, unit?, quantity?, lead_days?, note?}`，至少一项；三个可空字段显式传 `null` 即清空 | `ConsumableOut` |
+| DELETE | `/api/consumables/{item_id}` | 本人 | — | `{id}`（连带软删所有周期） |
+| GET | `/api/consumables/{item_id}/cycles` | 本人 | — | `{items: ConsumableCycleOut[]}`，新的在前，含进行中那轮 |
+| POST | `/api/consumables/{item_id}/cycles` | 本人 | `{started_on, expected_days?, note?}`；已有进行中周期返回 409 | 201 `ConsumableOut` |
+| POST | `/api/consumables/{item_id}/finish` | 本人 | `{ended_on?}`，缺省 UTC 今天；`ended_on < started_on` 返回 422；没有进行中周期返回 409 | `ConsumableOut` |
+| PATCH | `/api/consumables/{item_id}/cycles/{cycle_id}` | 本人 | `{started_on?, ended_on?, expected_days?, note?}`；`ended_on: null` 即撤回「用完」，但若还有另一轮开着返回 409 | `ConsumableOut` |
 | POST | `/api/admin/invite-codes` | `invite_code:create:any` | `{role: internal\|admin, count 1-50, expires_in_days 1-365, note?≤64}` | 201 `InviteCodeOut[]` |
 | GET | `/api/admin/invite-codes` | `invite_code:read:any` | `status?: unused\|used\|expired`、`role?`、`limit/offset` | `{items, has_next, total}` |
 | DELETE | `/api/admin/invite-codes/{code}` | `invite_code:delete:any` | — | `{code}` |
@@ -71,7 +79,7 @@ Base URL：`https://linx-api-78i.pages.dev`（生产）。CORS `allow_origins=["
 | GET | `/api/admin/activity` | `activity:read:any` | `user_id?`、`type?: page_view\|heartbeat\|page_leave`、`from?`、`to?`、`limit/offset` | `{items: ActivityOut[], has_next}` |
 | GET | `/api/admin/analytics/summary` | `activity:read:any` | `days 1-90`（默认 7） | `AnalyticsSummaryOut` |
 
-> 路由挂载：`/api/auth`、`/api/posts`、`/api/comments`、`/api/admin`、`/api/activity`、`/api/memos`、`/api/clips`
+> 路由挂载：`/api/auth`、`/api/posts`、`/api/comments`、`/api/admin`、`/api/activity`、`/api/memos`、`/api/clips`、`/api/consumables`
 > （见 `src/api/app.py`）。`comments.py` 同时挂在 `/api/posts` 与 `/api/comments` 两个前缀下。
 
 ## 主要对象
@@ -91,6 +99,15 @@ Base URL：`https://linx-api-78i.pages.dev`（生产）。CORS `allow_origins=["
 `done_at` 是完成时间，取消勾选时后端清空；`due_at` 是到期**时刻**——客户端把本地那一天的
 23:59:59 换算成 UTC 再上送（如北京时间 11-20 到期 → `2026-11-20 15:59:59`），
 只给日期的写法会被拒（422），服务端不再替客户端猜时区。
+
+**ConsumableOut**：`{id, name, category, unit?, quantity?, lead_days, note?, created_at, updated_at, cycle?, days_used?, days_left?, due_on?, progress?, status, last_days?, suggested_days?}`
+`cycle` 是进行中那一轮（没有则 `null`）；`status ∈ idle|unknown|due|soon|ok` 与所有「还剩几天/该买了」
+都是服务端按 `today + started_on + expected_days + lead_days` **现算**的，库里不存派生状态。
+`started_on` / `ended_on` / `due_on` 是**本地日 `YYYY-MM-DD`**（不是 memo 那种 UTC 时刻），
+客户端上送 `today` 以免跨时区错一天。
+
+**ConsumableCycleOut**：`{id, item_id, started_on, ended_on?, expected_days?, note?, created_at, updated_at, actual_days?}`；
+一个物品同时只允许一条 `ended_on` 为空的周期（partial unique index 兜底）。
 
 **ActivityOut**：`{id, user_id?, user_email?, type, path, ts, duration_ms?, ip?, country?, created_at}`；
 匿名行的 `user_id` / `user_email` 为 `null`。
@@ -166,7 +183,7 @@ HTTP 状态只是传输层，业务含义看 `code`。
 | `invalid_role` | 422 | 角色不在 `user`/`internal`/`admin` |
 | `invite_code_in_use` / `invalid_event_type` / `invalid_activity_path` / `invalid_client_address` / `invalid_timestamp` | 400–422 | 活动上报的类型、路径白名单、缺 IP、时间格式 |
 | `rate_limited` | 429 | 见限流表 |
-| `internal_error` | 500 | 插入失败等（`post`/`comment`/`memo` 各有自己的 detail） |
+| `internal_error` | 500 | 插入失败等（`post`/`comment`/`memo`/`consumable` 各有自己的 detail） |
 | `http_error` / `invalid_response` | 前端合成 | 非 JSON 响应、缺 `data` 字段（见 `src/api/client.ts`） |
 
 ## 前端对应模块
@@ -178,6 +195,7 @@ HTTP 状态只是传输层，业务含义看 `code`。
 | `src/api/auth.ts` | `/api/auth/*` |
 | `src/api/blog.ts` | `/api/posts`、`/api/posts/{id}/comments`、`/api/comments/{id}` |
 | `src/api/memos.ts` | `/api/memos*` |
+| `src/api/consumables.ts` | `/api/consumables*` |
 | `src/api/clips.ts` | `/api/clips*` |
 | `src/api/admin.ts` | `/api/admin/*` |
 | `src/activity/` | `/api/activity`、`/api/activity/visitor` |

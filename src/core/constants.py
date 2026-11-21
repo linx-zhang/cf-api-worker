@@ -34,6 +34,7 @@ CODE_INVALID_ACTIVITY_PATH = "invalid_activity_path"
 CODE_INVALID_CLIENT_ADDRESS = "invalid_client_address"
 CODE_INVALID_TIMESTAMP = "invalid_timestamp"
 CODE_RATE_LIMITED = "rate_limited"
+CODE_CONFLICT = "conflict"
 CODE_INTERNAL_ERROR = "internal_error"
 
 # --- Details ---------------------------------------------------------------
@@ -94,6 +95,18 @@ DELETED_AUTHOR_NAME = "已注销"
 DETAIL_MEMO_NOT_FOUND = "memo not found"
 DETAIL_MEMO_DELETED = "memo deleted"
 DETAIL_MEMO_CREATE_FAILED = "memo was not created"
+
+# Personal-space consumables (周期为主，不记每次消耗).
+DETAIL_CONSUMABLE_NOT_FOUND = "consumable not found"
+DETAIL_CONSUMABLE_DELETED = "consumable deleted"
+DETAIL_CONSUMABLE_CREATE_FAILED = "consumable was not created"
+DETAIL_CONSUMABLE_CYCLE_NOT_FOUND = "consumable cycle not found"
+DETAIL_CONSUMABLE_CYCLE_OPEN = "this consumable already has an open cycle"
+DETAIL_CONSUMABLE_NO_OPEN_CYCLE = "this consumable has no open cycle"
+DETAIL_CONSUMABLE_REOPEN_CONFLICT = (
+    "another cycle is still open, close it before reopening this one"
+)
+DETAIL_CONSUMABLE_DATE_RANGE = "end date must not be earlier than start date"
 
 # Shared clipboard snippets.
 DETAIL_CLIP_CREATED = "clip created"

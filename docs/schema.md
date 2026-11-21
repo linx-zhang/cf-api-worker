@@ -5,7 +5,7 @@
 >
 > 为什么用这种生成式文档而不是手写 ORM 模型：项目里没有 ORM，手写模型只能靠记忆维护，会和真实库悄悄对不上；这份文档每次都是从库里读出来的。
 
-共 7 张表：`activity_events`、`cache_entries`、`comments`、`invite_codes`、`memos`、`posts`、`users`
+共 9 张表：`activity_events`、`cache_entries`、`comments`、`consumable_cycles`、`consumable_items`、`invite_codes`、`memos`、`posts`、`users`
 
 ## activity_events
 
@@ -70,6 +70,54 @@
 - `parent_id` → `comments.id`
 - `author_id` → `users.id`
 - `post_id` → `posts.id`
+
+## consumable_cycles
+
+| 列 | 类型 | 可空 | 默认 | 主键 |
+| --- | --- | --- | --- | --- |
+| `id` | INTEGER | 否 |  | 1 |
+| `item_id` | INTEGER | 否 |  |  |
+| `started_on` | TEXT | 否 |  |  |
+| `ended_on` | TEXT | 是 |  |  |
+| `expected_days` | INTEGER | 是 |  |  |
+| `note` | TEXT | 是 |  |  |
+| `created_at` | TEXT | 否 | `datetime('now')` |  |
+| `updated_at` | TEXT | 否 | `datetime('now')` |  |
+| `deleted_at` | TEXT | 是 |  |  |
+
+索引：
+
+- `idx_consumable_cycles_live_item_ended`（普通）：``
+- `idx_consumable_cycles_live_item_started`（普通）：``
+- `idx_consumable_cycles_open_item`（唯一）：``
+
+外键：
+
+- `item_id` → `consumable_items.id`
+
+## consumable_items
+
+| 列 | 类型 | 可空 | 默认 | 主键 |
+| --- | --- | --- | --- | --- |
+| `id` | INTEGER | 否 |  | 1 |
+| `user_id` | INTEGER | 否 |  |  |
+| `name` | TEXT | 否 |  |  |
+| `category` | TEXT | 否 | `'other'` |  |
+| `unit` | TEXT | 是 |  |  |
+| `quantity` | REAL | 是 |  |  |
+| `lead_days` | INTEGER | 否 | `7` |  |
+| `note` | TEXT | 是 |  |  |
+| `created_at` | TEXT | 否 | `datetime('now')` |  |
+| `updated_at` | TEXT | 否 | `datetime('now')` |  |
+| `deleted_at` | TEXT | 是 |  |  |
+
+索引：
+
+- `idx_consumable_items_live_user_created`（普通）：``
+
+外键：
+
+- `user_id` → `users.id`
 
 ## invite_codes
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from datetime import datetime
 from typing import Literal
 
 from pydantic import (
@@ -430,6 +431,217 @@ class MemoSummaryOut(BaseModel):
     pending: int
     done: int
     due: int
+
+
+# --- Personal-space consumables --------------------------------------------
+
+CONSUMABLE_NAME_MAX = 40
+CONSUMABLE_NOTE_MAX = 200
+CONSUMABLE_UNIT_MAX = 8
+CONSUMABLE_LEAD_DAYS_MAX = 60
+CONSUMABLE_EXPECTED_DAYS_MAX = 3650
+
+ConsumableCategory = Literal["paper", "clean", "food", "pet", "other"]
+
+
+def _check_local_day(value: str | None) -> str | None:
+    """「哪一天」一律是本地日字符串，不猜时区，也不接受 datetime。"""
+    if value is None:
+        return None
+    text = value.strip()
+    try:
+        parsed = datetime.strptime(text, "%Y-%m-%d").date()
+    except ValueError as exc:
+        raise ValueError("date must be YYYY-MM-DD") from exc
+    if not 1900 <= parsed.year <= 2200:
+        raise ValueError("date is out of range")
+    return text
+
+
+def _clean_optional_text(value: str | None, limit: int) -> str | None:
+    if value is None:
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    if len(text) > limit:
+        raise ValueError(f"text must be at most {limit} characters")
+    return text
+
+
+class ConsumableIn(BaseModel):
+    """新建一个消耗品；顺手开出第一轮周期，平时不用再记录。
+
+    ``started_on`` 由客户端按自己的本地今天上送：服务端不猜时区，
+    缺省才退回 UTC 的今天（跨零点前后可能差一天，前端始终会传）。
+    """
+
+    name: str = Field(min_length=1, max_length=CONSUMABLE_NAME_MAX)
+    category: ConsumableCategory = "other"
+    unit: str | None = Field(default=None, max_length=CONSUMABLE_UNIT_MAX)
+    quantity: float | None = Field(default=None, ge=0, le=100_000)
+    lead_days: int = Field(default=7, ge=0, le=CONSUMABLE_LEAD_DAYS_MAX)
+    note: str | None = Field(default=None, max_length=CONSUMABLE_NOTE_MAX)
+    started_on: str | None = None
+    expected_days: int | None = Field(
+        default=None, ge=1, le=CONSUMABLE_EXPECTED_DAYS_MAX
+    )
+
+    @field_validator("name")
+    @classmethod
+    def _name(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            raise ValueError("name must not be blank")
+        return text
+
+    @field_validator("unit")
+    @classmethod
+    def _unit(cls, value: str | None) -> str | None:
+        return _clean_optional_text(value, CONSUMABLE_UNIT_MAX)
+
+    @field_validator("note")
+    @classmethod
+    def _note(cls, value: str | None) -> str | None:
+        return _clean_optional_text(value, CONSUMABLE_NOTE_MAX)
+
+    @field_validator("started_on")
+    @classmethod
+    def _started_on(cls, value: str | None) -> str | None:
+        return _check_local_day(value)
+
+
+class ConsumableUpdateIn(BaseModel):
+    """只改物品本身的设置；周期有单独的接口，免得一次 PATCH 改两处。"""
+
+    name: str | None = Field(
+        default=None, min_length=1, max_length=CONSUMABLE_NAME_MAX
+    )
+    category: ConsumableCategory | None = None
+    unit: str | None = Field(default=None, max_length=CONSUMABLE_UNIT_MAX)
+    quantity: float | None = Field(default=None, ge=0, le=100_000)
+    lead_days: int | None = Field(default=None, ge=0, le=CONSUMABLE_LEAD_DAYS_MAX)
+    note: str | None = Field(default=None, max_length=CONSUMABLE_NOTE_MAX)
+
+    @field_validator("name")
+    @classmethod
+    def _name(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        text = value.strip()
+        if not text:
+            raise ValueError("name must not be blank")
+        return text
+
+    @field_validator("unit")
+    @classmethod
+    def _unit(cls, value: str | None) -> str | None:
+        return _clean_optional_text(value, CONSUMABLE_UNIT_MAX)
+
+    @field_validator("note")
+    @classmethod
+    def _note(cls, value: str | None) -> str | None:
+        return _clean_optional_text(value, CONSUMABLE_NOTE_MAX)
+
+    @model_validator(mode="after")
+    def _at_least_one_field(self) -> ConsumableUpdateIn:
+        if not self.model_fields_set:
+            raise ValueError("at least one field is required")
+        return self
+
+
+class CycleStartIn(BaseModel):
+    """开一轮（新买/换新）；物品已有进行中周期时返回 409。"""
+
+    started_on: str
+    expected_days: int | None = Field(
+        default=None, ge=1, le=CONSUMABLE_EXPECTED_DAYS_MAX
+    )
+    note: str | None = Field(default=None, max_length=CONSUMABLE_NOTE_MAX)
+
+    @field_validator("started_on")
+    @classmethod
+    def _started_on(cls, value: str) -> str:
+        result = _check_local_day(value)
+        assert result is not None
+        return result
+
+    @field_validator("note")
+    @classmethod
+    def _note(cls, value: str | None) -> str | None:
+        return _clean_optional_text(value, CONSUMABLE_NOTE_MAX)
+
+
+class CycleFinishIn(BaseModel):
+    """点「用完了」：只关掉进行中的那一轮；不开下一轮 = 先不买。"""
+
+    ended_on: str | None = None
+
+    @field_validator("ended_on")
+    @classmethod
+    def _ended_on(cls, value: str | None) -> str | None:
+        return _check_local_day(value)
+
+
+class CycleUpdateIn(BaseModel):
+    """修正：改开始日/结束日/预计天数；``ended_on: null`` 等于撤回「用完」。"""
+
+    started_on: str | None = None
+    ended_on: str | None = None
+    expected_days: int | None = Field(
+        default=None, ge=1, le=CONSUMABLE_EXPECTED_DAYS_MAX
+    )
+    note: str | None = Field(default=None, max_length=CONSUMABLE_NOTE_MAX)
+
+    @field_validator("started_on", "ended_on")
+    @classmethod
+    def _days(cls, value: str | None) -> str | None:
+        return _check_local_day(value)
+
+    @field_validator("note")
+    @classmethod
+    def _note(cls, value: str | None) -> str | None:
+        return _clean_optional_text(value, CONSUMABLE_NOTE_MAX)
+
+    @model_validator(mode="after")
+    def _at_least_one_field(self) -> CycleUpdateIn:
+        if not self.model_fields_set:
+            raise ValueError("at least one field is required")
+        return self
+
+
+class ConsumableCycleOut(BaseModel):
+    id: int
+    started_on: str
+    ended_on: str | None = None
+    expected_days: int | None = None
+    note: str | None = None
+    created_at: str
+    updated_at: str
+    # 已结束周期的实际天数；进行中的为 null
+    actual_days: int | None = None
+
+
+class ConsumableOut(BaseModel):
+    """一个物品 + 它当前那一轮 + 由日期算出来的展示字段（一个都不入库）。"""
+
+    id: int
+    name: str
+    category: str
+    unit: str | None = None
+    quantity: float | None = None
+    lead_days: int
+    note: str | None = None
+    created_at: str
+    updated_at: str
+    cycle: ConsumableCycleOut | None = None
+    days_used: int | None = None
+    days_left: int | None = None
+    due_on: str | None = None
+    progress: float | None = None
+    status: Literal["ok", "soon", "due", "unknown", "idle"] = "idle"
+    last_days: int | None = None
+    suggested_days: int | None = None
 
 
 # --- Shared clipboard -------------------------------------------------------

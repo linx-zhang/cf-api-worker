@@ -74,7 +74,7 @@ $env:Path = "C:\Users\LinxZhang\.local\bin;C:\Program Files\nodejs;C:\Windows\Sy
 $env:UV_PYTHON = "3.14"
 Set-Location -LiteralPath "D:\this_code\cloudflare-workers\api-worker"
 
-uv run --frozen pytest -q              # 113 passed
+uv run --frozen pytest -q              # 129 passed
 uv run --frozen ruff check src tests   # All checks passed
 
 # 仅在新增 migrations/*.sql 时；不要加 --yes（会吐 help 并崩溃），改用 y 管道
@@ -93,7 +93,7 @@ Invoke-WebRequest "https://api-worker.linx-zhang.workers.dev/api/posts?limit=3&o
 - `pylock.toml` 是 gitignore 的生成物，删了会自动重建；入库的是 `uv.lock`。
 - D1 SQL **必须单行**（多行报 `incomplete input`）；`PRAGMA auto_vacuum/page_count/freelist_count` 被拒，`page_size` 可读。
 - 分页参数是 `limit`/`offset`（不是 `page`/`limit`）；业务路由统一在 `/api` 下（`app.py` 的 `API_PREFIX`，前端拼 `API_ROOT`），根路径只留给 `/` 健康检查与 `/docs`、`/openapi.json`。
-- 时间一律 UTC datetime 字符串 `YYYY-MM-DD HH:MM:SS`；软删写 `datetime('now')`，读用 `deleted_at IS NULL`。
+- 时间一律 UTC datetime 字符串 `YYYY-MM-DD HH:MM:SS`；唯一例外是消耗品周期（`consumable_cycles.started_on/ended_on`）与 `due_on`，它们是客户端本地日 `YYYY-MM-DD`，接口用 `today` 参数对齐时区。软删写 `datetime('now')`，读用 `deleted_at IS NULL`。
 
 ## 结构约定
 
