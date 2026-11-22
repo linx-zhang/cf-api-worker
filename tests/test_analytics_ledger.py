@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta, timezone
 
 from api.app import app
 from api.deps import get_db
@@ -50,9 +50,25 @@ def db_of(api):
     return app.dependency_overrides[get_db]()
 
 
+BEIJING = timezone(timedelta(hours=8))
+
+
 def stamp(minutes_ago: int) -> str:
-    moment = datetime.now(UTC) - timedelta(minutes=minutes_ago)
-    return moment.strftime("%Y-%m-%d %H:%M:%S")
+    """按北京日历日生成测试时间，避开服务器时区与午夜边界。
+
+    ``本站在分析里用北京时间切「今天」``。如果直接写成
+    ``datetime.now(UTC) - minutes_ago``，在每天北京时间 00:00-00:30 跑测试时，
+    「30 分钟前」会落到前一天，CI 在 UTC 16:00 左右触发就会误报 today=0。
+    这里把参照点固定到目标日的北京时间中午，再按分钟回退，保证同一用例的
+    "今天"事件始终落在同一个北京日历日，同时让 ``minutes_ago >= 24h`` 的
+    事件稳定落到前一天。
+    """
+    today = date.fromisoformat(beijing_today())
+    day = today - timedelta(days=minutes_ago // (24 * 60))
+    remainder = minutes_ago % (24 * 60)
+    anchor = datetime.combine(day, time(12, 0), tzinfo=BEIJING)
+    moment = anchor - timedelta(minutes=remainder)
+    return moment.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def add_event(
