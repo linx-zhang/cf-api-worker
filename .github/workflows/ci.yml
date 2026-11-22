@@ -1,0 +1,45 @@
+# 后端唯一的自动闸门：测试、lint、API 文档契约、迁移顺序。
+#
+# 部署仍是手工的（pywrangler 依赖 Pyodide/3.14 工具链），这里只负责在 push /
+# PR 时把「能不能上线」的判断固定下来，避免靠人记命令。
+name: api-worker CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: api-worker-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      UV_PYTHON: "3.14"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          python-version: "3.14"
+
+      - name: 安装依赖
+        run: uv sync --frozen
+
+      - name: 单元测试（含迁移顺序校验）
+        run: uv run --frozen pytest -q
+
+      - name: Ruff
+        run: uv run --frozen ruff check src tests scripts
+
+      - name: API 文档与路由一致
+        run: uv run --frozen python scripts/check-api-doc.py
