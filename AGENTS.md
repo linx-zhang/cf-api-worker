@@ -78,7 +78,7 @@ Set-Location -LiteralPath "D:\this_code\cloudflare-workers\api-worker"
 
 uv run --frozen pytest -q              # 143 passed
 uv run --frozen ruff check src tests scripts   # All checks passed
-uv run --frozen python scripts/check-layers.py  # Layer check OK (39 files)
+uv run --frozen python scripts/check-layers.py  # 应输出 Layer check OK
 uv run --frozen python scripts/check-api-doc.py  # routes: 43 doc rows: 43
 
 # 仅在新增 migrations/*.sql 时；不要加 --yes（会吐 help 并崩溃），改用 y 管道
