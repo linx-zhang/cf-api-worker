@@ -20,6 +20,7 @@ from api.models import (
 )
 from api.responses import ApiError, split_page, success
 from core.constants import (
+    ACTIVITY_RETENTION_DAYS,
     CODE_CANNOT_CHANGE_OWN_ROLE,
     CODE_CANNOT_DELETE_SELF,
     CODE_EMAIL_EXISTS,
@@ -47,7 +48,6 @@ from core.utils import sqlite_timestamp
 from infra.db import Database
 from infra.passwords import generate_temporary_password, hash_password
 from services.analytics_ledger import load_summary
-from tasks.activity_retention import ACTIVITY_RETENTION_DAYS
 
 router = APIRouter()
 

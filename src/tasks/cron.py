@@ -18,8 +18,9 @@ from __future__ import annotations
 
 import traceback
 
+from core.constants import ACTIVITY_RETENTION_DAYS
 from infra.db import Database
-from tasks.activity_retention import ACTIVITY_RETENTION_DAYS, purge_old_activity
+from tasks.activity_retention import purge_old_activity
 from tasks.analytics_ledger import persist_analytics_ledger
 from tasks.cache_cleanup import purge_expired_cache
 from tasks.memo_tombstone import MEMO_TOMBSTONE_DAYS, purge_memo_tombstones

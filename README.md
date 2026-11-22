@@ -7,7 +7,7 @@ Routes: the endpoint table (method / path / auth / request / response) lives in 
 Permissions (resource:action:scope): user and internal both hold account:read:self, account:update:self, post:create:any, post:update:own, post:delete:own, comment:create:any, comment:delete:own, activity:write:self. admin holds those plus post:update:any, post:delete:any, comment:delete:any, invite_code:create:any, invite_code:read:any, invite_code:delete:any, user:read:any, user:update:any, user:delete:any, user:reset_password:any, activity:read:any. PUBLIC (never returned to clients) covers post:read:any and comment:read:any. /clips adds clip:delete:own for every signed-in role and clip:delete:any for admin, while POST /clips only needs a token (same shape as /memos); GET /clips/{code} is public because the code itself is the capability, and no route lists the stored snippets — so reads carry their own budget instead: 60/min per client ip and 120/min per code, fixed one-minute windows, answering 429 rate_limited with Retry-After. /memos is self-scoped and adds no permission code: every memo route requires a token and takes the owner from it, never from the request. /consumables is the same shape — token only, owner from the token, no permission code.
 Migrations (migrations/, applied in filename order via wrangler d1 migrations apply): 0001_init.sql, 0002_invite_codes_created_by.sql, 0003_user_soft_delete.sql, 0004_activity_events.sql, 0005_user_profile.sql, 0006_user_password_reset.sql, 0007_user_last_active.sql, 0008_invite_code_note.sql, 0009_token_invalidated_at.sql, 0010_list_order_indexes.sql, 0011_db_cache.sql, 0012_activity_anonymous.sql, 0013_memos.sql, 0014_memo_due_utc.sql, 0015_live_partial_indexes.sql, 0016_consumables.sql.
 Schema: migrations/ is the single source of truth for the database shape. docs/schema.md is a GENERATED view of the live D1 structure (tables, columns, types, nullability, defaults, PK, indexes, foreign keys) meant for humans and LLMs to read, because there is no ORM to describe the tables in code. Never hand-edit docs/schema.md; regenerate it with `npm run schema` after every migration and commit both.
-Maintenance: after any context reset, read the "Maintenance checklist" section before changing the schema or adding a route - migrations, docs/schema.md, docs/api.md and the README migration table have to move together.
+Maintenance: after any context reset, read `ARCHITECTURE.md` for the layer map and the "Maintenance checklist" section before changing the schema or adding a route - migrations, docs/schema.md, docs/api.md and the README migration table have to move together. `scripts/check-layers.py` enforces the one-way import direction (`core <- infra <- services <- api/tasks`); CI runs it after ruff.
 D1 binding: env.DB -> database name api-worker-db (configured in wrangler.jsonc).
 Commands: npx wrangler dev (local), npx wrangler d1 migrations apply api-worker-db --local|--remote, npx wrangler deploy, npx wrangler types. JWT_SECRET comes from .dev.vars locally and from a Worker secret in production.
 Conventions: soft delete via deleted_at on users/posts/comments; author display name resolves as nickname -> "first_name last_name" -> email local part, masked as "已注销" for deleted accounts; POST /activity is throttled to one batch per user per 10 seconds (429 rate_limited). A batch containing page_leave gets one extra chance per window, and only when that user's previous page_leave is already one window old; repeated page_leave then hits the same 429. POST /posts/batch-delete soft deletes 1-50 ids and reports per-id failures.
@@ -16,6 +16,8 @@ Conventions: soft delete via deleted_at on users/posts/comments; author display 
 # api-worker
 
 A compact backend for a blog/reporting UI: authentication with invite codes, posts with comments, soft deletion everywhere, admin user management, and an activity log fed by the frontend.
+
+**Start with [`ARCHITECTURE.md`](ARCHITECTURE.md)** for the layer map, allowed import direction, request lifecycle and "where does this change go". This README is the broader project manual; `AGENTS.md` is the deploy/ops quick reference.
 
 It runs on Cloudflare Workers in Python (Pyodide runtime) and uses FastAPI for routing only; there is no ORM and no async framework beyond the Workers runtime.
 
@@ -321,7 +323,7 @@ Update all three of: `src/api/app.py` (router wiring), `docs/api.md` (the endpoi
 
 **Where scripts go**
 
-`scripts/` holds project tooling only, each wired to an npm script: `dump-schema.mjs` → `npm run schema`, `check-api-doc.py` → `npm run api:doc`, `new-post.mjs` → `npm run post`. One-off scripts — data seeding, probes, one-time SQL — go under `scripts/agent/` and are never referenced by the build.
+`scripts/` holds project tooling only, each wired to an npm script: `dump-schema.mjs` → `npm run schema`, `check-api-doc.py` → `npm run api:doc`, `check-layers.py` → `npm run layers`, `new-post.mjs` → `npm run post`. One-off scripts — data seeding, probes, one-time SQL — go under `scripts/agent/` and are never referenced by the build.
 
 **Adding a cron job**
 

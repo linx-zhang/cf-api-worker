@@ -7,12 +7,8 @@ DELETE would hit D1's statement budget and burn the scheduled run's CPU time.
 
 from __future__ import annotations
 
+from core.constants import ACTIVITY_RETENTION_DAYS
 from infra.db import Database
-
-# Client-reported ``ts`` is only validated at write time, so the server clock
-# (``created_at``) is the trustworthy age. Nothing older than this window is
-# needed by the admin activity view.
-ACTIVITY_RETENTION_DAYS = 30
 
 # Rows per DELETE: small enough that each statement stays cheap, large enough
 # that a normal sweep finishes in one or two round trips.

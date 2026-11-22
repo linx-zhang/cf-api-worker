@@ -1,4 +1,4 @@
-# 后端唯一的自动闸门：测试、lint、API 文档契约、迁移顺序。
+# 后端唯一的自动闸门：测试、lint、分层依赖、API 文档契约、迁移顺序。
 #
 # 部署仍是手工的（pywrangler 依赖 Pyodide/3.14 工具链），这里只负责在 push /
 # PR 时把「能不能上线」的判断固定下来，避免靠人记命令。
@@ -40,6 +40,9 @@ jobs:
 
       - name: Ruff
         run: uv run --frozen ruff check src tests scripts
+
+      - name: 分层依赖（低层不得反向 import 高层）
+        run: uv run --frozen python scripts/check-layers.py
 
       - name: API 文档与路由一致
         run: uv run --frozen python scripts/check-api-doc.py

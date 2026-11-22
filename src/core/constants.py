@@ -92,6 +92,11 @@ DETAIL_PASSWORD_RESET = (
 # Author display for soft-deleted accounts.
 DELETED_AUTHOR_NAME = "已注销"
 
+# Activity retention policy. Lives in core because both the cron job and the
+# admin analytics endpoint need the same ceiling; putting it in tasks would
+# make the HTTP layer import the scheduler.
+ACTIVITY_RETENTION_DAYS = 30
+
 # Personal-space memos.
 DETAIL_MEMO_NOT_FOUND = "memo not found"
 DETAIL_MEMO_DELETED = "memo deleted"

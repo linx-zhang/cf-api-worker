@@ -8,6 +8,7 @@
     "start": "uv run --frozen pywrangler dev",
     "schema": "node scripts/dump-schema.mjs",
     "api:doc": "python scripts/check-api-doc.py",
+    "layers": "uv run --frozen python scripts/check-layers.py",
     "backup:d1": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/backup-d1.ps1",
     "post": "node scripts/new-post.mjs"
   },
