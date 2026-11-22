@@ -22,10 +22,13 @@ from api.responses import ApiError, split_page, success
 from core.constants import (
     CODE_INTERNAL_ERROR,
     CODE_NOT_FOUND,
+    CODE_VALIDATION_ERROR,
     DETAIL_MEMO_CREATE_FAILED,
     DETAIL_MEMO_DELETED,
     DETAIL_MEMO_NOT_FOUND,
+    DETAIL_VALIDATION_ERROR,
 )
+from core.timestamps import normalize_utc_datetime
 from infra.db import Database
 
 router = APIRouter()
@@ -52,6 +55,17 @@ async def _get_memo(db: Database, memo_id: int, user_id: int) -> dict:
     return memo
 
 
+def _due_bound(value: str | None, name: str) -> str | None:
+    try:
+        return normalize_utc_datetime(value)
+    except ValueError as exc:
+        raise ApiError(
+            CODE_VALIDATION_ERROR,
+            DETAIL_VALIDATION_ERROR.format(reason=f"{name}: {exc}"),
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+        ) from None
+
+
 @router.get("/summary")
 async def memo_summary(
     user: dict = Depends(get_current_user),
@@ -69,7 +83,8 @@ async def memo_summary(
         "COALESCE(SUM(CASE WHEN done = 0 THEN 1 ELSE 0 END), 0) AS pending, "
         "COALESCE(SUM(CASE WHEN done = 1 THEN 1 ELSE 0 END), 0) AS done, "
         "COALESCE(SUM(CASE WHEN done = 0 AND due_at IS NOT NULL "
-        f"AND due_at <= {_TODAY_UTC} THEN 1 ELSE 0 END), 0) AS due "
+        f"AND due_at <= {_TODAY_UTC} THEN 1 ELSE 0 END), 0) AS due, "
+        "COALESCE(SUM(CASE WHEN due_at IS NULL THEN 1 ELSE 0 END), 0) AS undated "
         "FROM memos WHERE user_id = ? AND deleted_at IS NULL",
         (user["id"],),
     )
@@ -81,6 +96,9 @@ async def list_memos(
     page: tuple[int, int] = Depends(pagination),
     _legacy: None = Depends(reject_legacy_paging),
     done: bool | None = Query(None),
+    due_from: str | None = Query(None),
+    due_to: str | None = Query(None),
+    undated: bool = Query(False),
     user: dict = Depends(get_current_user),
     db: Database = Depends(get_db),
 ) -> JSONResponse:
@@ -90,13 +108,44 @@ async def list_memos(
     on top) and rows without a due date follow, newest-created first. Finished
     rows have no meaningful due order, so the ``done=true`` segment is sorted
     by completion time instead.
+
+    ``due_from`` / ``due_to`` are inclusive UTC datetime bounds for the
+    calendar window; ``undated=true`` returns only rows without a due date.
+    The calendar previews a bounded page of those, so it never has to download
+    every memo body to draw one month.
     """
     limit, offset = page
+    from_bound = _due_bound(due_from, "due_from")
+    to_bound = _due_bound(due_to, "due_to")
+    if from_bound is not None and to_bound is not None and from_bound > to_bound:
+        raise ApiError(
+            CODE_VALIDATION_ERROR,
+            DETAIL_VALIDATION_ERROR.format(reason="due_from must be <= due_to"),
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
+    if undated and (from_bound is not None or to_bound is not None):
+        raise ApiError(
+            CODE_VALIDATION_ERROR,
+            DETAIL_VALIDATION_ERROR.format(
+                reason="undated=true cannot be combined with due bounds"
+            ),
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+        )
+
     conditions = ["user_id = ?"]
     params: list[object] = [user["id"]]
     if done is not None:
         conditions.append("done = ?")
         params.append(1 if done else 0)
+    if undated:
+        conditions.append("due_at IS NULL")
+    else:
+        if from_bound is not None:
+            conditions.append("due_at >= ?")
+            params.append(from_bound)
+        if to_bound is not None:
+            conditions.append("due_at <= ?")
+            params.append(to_bound)
     order = (
         "done_at DESC, id DESC"
         if done is True

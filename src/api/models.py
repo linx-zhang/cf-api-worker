@@ -426,11 +426,14 @@ class MemoSummaryOut(BaseModel):
     """个人空间的计数：列表本身走 limit/offset，不在分页接口里塞 total。
 
     ``due`` 只数"未完成且到期日不晚于今天"（含逾期），因为界面上标红的就是这批。
+    ``undated`` 是月历底部「未排到期日」的总数；月历只预览前若干条，不能拿
+    预览数组的长度冒充总数。
     """
 
     pending: int
     done: int
     due: int
+    undated: int
 
 
 # --- Personal-space consumables --------------------------------------------

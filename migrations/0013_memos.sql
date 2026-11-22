@@ -9,6 +9,9 @@
 -- due_at 存 'YYYY-MM-DD'，是用户眼里的到期日（本地日期语义，不存 UTC 时刻）：
 -- 这一期只要求"列表里标红"，不参与任何提醒调度。真提醒需要另起一个 cron
 -- 任务去扫 due_at，那是二期，届时这列不用改。
+--
+-- 注意：0014_memo_due_utc.sql 已把 due_at 改为 UTC datetime
+-- （'YYYY-MM-DD HH:MM:SS'）；本段只保留建表时的历史语义，不代表当前行为。
 CREATE TABLE IF NOT EXISTS memos (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL REFERENCES users (id),
