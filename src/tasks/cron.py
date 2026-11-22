@@ -16,6 +16,8 @@ the last fold.
 
 from __future__ import annotations
 
+import traceback
+
 from infra.db import Database
 from tasks.activity_retention import ACTIVITY_RETENTION_DAYS, purge_old_activity
 from tasks.analytics_ledger import persist_analytics_ledger
@@ -27,6 +29,24 @@ HOURLY_LEDGER_CRON = "0 * * * *"
 
 
 async def run_cron(env, cron: str = "cron") -> dict[str, int]:
+    """Run the job set, logging a failed trigger before re-raising.
+
+    An exception in ``scheduled()`` already reaches the Worker log, but without
+    the trigger expression or a stable prefix it is hard to find. Keep the
+    runtime's failure semantics (re-raise) so the platform still marks the
+    invocation failed.
+    """
+    try:
+        return await _run_cron(env, cron)
+    except Exception as exc:
+        stack = "".join(
+            traceback.format_exception(type(exc), exc, exc.__traceback__)
+        ).strip()
+        print(f"[api-worker] cron failed cron={cron}: {type(exc).__name__}: {exc}\n{stack}")
+        raise
+
+
+async def _run_cron(env, cron: str = "cron") -> dict[str, int]:
     """Run the job set that belongs to this trigger; returns per-job counts.
 
     ``env`` is the entrypoint's own environment: the ``env`` argument of the

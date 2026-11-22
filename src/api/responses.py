@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import re
+import traceback
+import uuid
 from typing import Any
 
 from fastapi import FastAPI, Request
@@ -116,6 +119,55 @@ def _validation_summary(errors: list[dict], path: str = "") -> tuple[str, str]:
     return code, template.format(reason=message)
 
 
+_REQUEST_ID_SAFE = re.compile(r"[^A-Za-z0-9._:-]+")
+
+
+def request_id(request: Request) -> str:
+    """Correlate a 500 with the Worker log without trusting client input.
+
+    Cloudflare adds ``CF-Ray`` to every request, so it is the primary id.
+    ``X-Request-Id`` is accepted for callers that already have one; both are
+    reduced to a safe header subset and capped. Local tests get a generated id.
+    """
+    for name in ("cf-ray", "x-request-id"):
+        value = request.headers.get(name)
+        if value:
+            safe = _REQUEST_ID_SAFE.sub("", value)[:128]
+            if safe:
+                return safe
+    return f"local-{uuid.uuid4().hex[:16]}"
+
+
+def log_unhandled(request: Request, exc: Exception) -> str:
+    """Print one structured, greppable block and return the request id.
+
+    Worker logs are the only durable trace of a caught exception; FastAPI's
+    generic 500 handler otherwise swallows both the type and the stack.
+    """
+    rid = request_id(request)
+    stack = "".join(
+        traceback.format_exception(type(exc), exc, exc.__traceback__)
+    ).strip()
+    print(
+        f"[api-worker] unhandled request_id={rid} "
+        f"method={request.method} path={request.url.path} "
+        f"exception={type(exc).__name__}: {exc}\n{stack}",
+        flush=True,
+    )
+    return rid
+
+
+async def unhandled_error(request: Request, exc: Exception) -> JSONResponse:
+    rid = log_unhandled(request, exc)
+    return _envelope(
+        CODE_INTERNAL_ERROR,
+        DETAIL_INTERNAL_ERROR,
+        None,
+        500,
+        {"x-request-id": rid},
+    )
+
+
 def install_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(ApiError)
     async def _api_error(request: Request, exc: ApiError) -> JSONResponse:
@@ -140,6 +192,4 @@ def install_error_handlers(app: FastAPI) -> None:
             code, detail = CODE_HTTP_ERROR, str(exc.detail)
         return _envelope(code, detail, None, exc.status_code)
 
-    @app.exception_handler(Exception)
-    async def _unhandled(request: Request, exc: Exception) -> JSONResponse:
-        return _envelope(CODE_INTERNAL_ERROR, DETAIL_INTERNAL_ERROR, None, 500)
+    app.add_exception_handler(Exception, unhandled_error)
