@@ -84,18 +84,29 @@ async def list_memos(
     user: dict = Depends(get_current_user),
     db: Database = Depends(get_db),
 ) -> JSONResponse:
-    """List the caller's memos, newest first; ``done`` filters the two segments."""
+    """List the caller's memos in the order the list actually reads.
+
+    Pending rows are sorted by due date first (soonest — including overdue —
+    on top) and rows without a due date follow, newest-created first. Finished
+    rows have no meaningful due order, so the ``done=true`` segment is sorted
+    by completion time instead.
+    """
     limit, offset = page
     conditions = ["user_id = ?"]
     params: list[object] = [user["id"]]
     if done is not None:
         conditions.append("done = ?")
         params.append(1 if done else 0)
+    order = (
+        "done_at DESC, id DESC"
+        if done is True
+        else "due_at IS NULL, due_at ASC, created_at DESC, id DESC"
+    )
     memos = await db.fetch_all(
         _MEMO_SELECT
         + " AND "
         + " AND ".join(conditions)
-        + " ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+        + f" ORDER BY {order} LIMIT ? OFFSET ?",
         (*params, limit + 1, offset),
     )
     rows, has_next = split_page(memos, limit)

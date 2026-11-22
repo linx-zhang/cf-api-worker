@@ -25,6 +25,10 @@ Base URL：`https://linx-api-78i.pages.dev`（生产）。CORS `allow_origins=["
 `/api/admin/users` 与 `/api/admin/invite-codes` 额外带 `total`（界面要显示「共 N 条」），
 但翻页必须靠 `has_next`，不能拿 `total` 做算术——`total` 与实际页不同事务。
 
+**排序**：`GET /api/memos` 有到期日的按 `due_at` 升序在前，没有到期日的排后面并按 `created_at` 倒序；
+`done=true` 时改按 `done_at` 倒序。`GET /api/admin/users` 按 `last_active_at` 倒序，从没活跃过的按 `created_at` 倒序垫底。
+其余列表按 `created_at` 倒序，所有排序都以 `id` 收尾保证稳定。
+
 **时间**：服务端时间戳统一 `TEXT`，`datetime('now')` 写入，即 UTC；本地化只在前端做。
 `/api/activity` 的 `ts` 是客户端 epoch 毫秒：允许 30 天内、未来不超过 5 分钟。
 

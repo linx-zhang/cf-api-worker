@@ -230,7 +230,9 @@ async def list_users(
     total = int(total_row["total"]) if total_row else 0
     rows = await db.fetch_all(
         f"{_ADMIN_USER_SELECT}{where} "
-        "ORDER BY u.created_at DESC, u.id DESC LIMIT ? OFFSET ?",
+        # 活跃优先：最近有访问的在最前，从没活跃过的按注册时间垫底。
+        "ORDER BY (u.last_active_at IS NULL), u.last_active_at DESC, "
+        "u.created_at DESC, u.id DESC LIMIT ? OFFSET ?",
         [*params, limit + 1, offset],
     )
     items, has_next = split_page(rows, limit)

@@ -128,6 +128,38 @@ def test_admin_can_list_users(api):
     assert response.data["items"][0]["id"] == admin_id
 
 
+def test_admin_users_sort_by_last_active_desc(api):
+    """最近活跃的在最前；从没活跃过的按注册时间垫底。"""
+    admin_id, token = _bearer(api, "admin", "admin@example.com")
+    oldest = api.seed_user("oldest@example.com")
+    recent = api.seed_user("recent@example.com")
+    never = api.seed_user("never@example.com")
+    api.execute(
+        "UPDATE users SET last_active_at = '2026-09-20 00:00:00' WHERE id = ?",
+        (admin_id,),
+    )
+    api.execute(
+        "UPDATE users SET last_active_at = ?, created_at = ? WHERE id = ?",
+        ("2026-10-01 00:00:00", "2026-09-01 00:00:00", oldest),
+    )
+    api.execute(
+        "UPDATE users SET last_active_at = ?, created_at = ? WHERE id = ?",
+        ("2026-11-20 00:00:00", "2026-09-02 00:00:00", recent),
+    )
+    api.execute(
+        "UPDATE users SET last_active_at = NULL, created_at = ? WHERE id = ?",
+        ("2026-11-19 00:00:00", never),
+    )
+
+    response = api.get(ADMIN, token=token)
+    assert [row["email"] for row in response.data["items"]] == [
+        "recent@example.com",
+        "oldest@example.com",
+        "admin@example.com",
+        "never@example.com",
+    ]
+
+
 def test_admin_cannot_change_own_role(api):
     admin_id, token = _bearer(api, "admin", "admin@example.com")
     response = api.patch(f"{ADMIN}/{admin_id}", {"role": "user"}, token=token)
@@ -279,6 +311,50 @@ def test_list_memos_only_returns_the_callers_rows(api):
     api.seed_memo(stranger, "别人的")
     response = api.get("/api/memos", token=token)
     assert [row["body"] for row in response.data["items"]] == ["我的"]
+
+
+def test_list_memos_sorts_by_due_then_creation(api):
+    """到期日近的在最前；没有到期日的排后面，且按创建时间倒序。"""
+    user_id, token = _bearer(api)
+    seen = {
+        "晚到期": ("2026-12-10 15:59:59", "2026-11-01 00:00:00"),
+        "无到期·新": (None, "2026-11-20 00:00:00"),
+        "早到期": ("2026-11-25 15:59:59", "2026-11-05 00:00:00"),
+        "无到期·旧": (None, "2026-11-10 00:00:00"),
+    }
+    for body, (due_at, created_at) in seen.items():
+        memo_id = api.seed_memo(user_id, body)
+        api.execute(
+            "UPDATE memos SET due_at = ?, created_at = ? WHERE id = ?",
+            (due_at, created_at, memo_id),
+        )
+
+    response = api.get("/api/memos", token=token)
+    assert [row["body"] for row in response.data["items"]] == [
+        "早到期",
+        "晚到期",
+        "无到期·新",
+        "无到期·旧",
+    ]
+
+
+def test_done_memos_sort_by_completion_time(api):
+    """已完成没有有意义的到期顺序，按完成时间倒序（后完成的在前）。"""
+    user_id, token = _bearer(api)
+    first = api.seed_memo(user_id, "先完成")
+    second = api.seed_memo(user_id, "后完成")
+    for memo_id in (first, second):
+        assert api.patch(f"/api/memos/{memo_id}", {"done": True}, token=token).status == 200
+    api.execute(
+        "UPDATE memos SET done_at = '2026-11-10 08:00:00' WHERE id = ?", (first,)
+    )
+    api.execute(
+        "UPDATE memos SET done_at = '2026-11-18 08:00:00' WHERE id = ?", (second,)
+    )
+
+    response = api.get("/api/memos?done=true", token=token)
+    assert [row["body"] for row in response.data["items"]] == ["后完成", "先完成"]
+
 
 
 # ---- 登录限流 ---------------------------------------------------------------

@@ -216,4 +216,5 @@
 
 - 软删除：`users` / `posts` / `comments` 都有 `deleted_at`，所有读查询必须带 `deleted_at IS NULL`；删帖时同时软删它的评论。
 - 时间：统一 `TEXT`，由 `datetime('now')` 写入，即 **UTC**；本地化只在前端做。
-- 稳定分页：列表按 `created_at DESC, id DESC` 排，`id` 参与排序键，避免同一秒创建的行顺序漂移。
+- 稳定分页：大多数列表按 `created_at DESC, id DESC` 排，`id` 参与排序键，避免同一秒创建的行顺序漂移。
+- 业务排序例外：`memos` 按到期日升序、无到期日按创建倒序（`done=true` 按 `done_at` 倒序）；`users` 按 `last_active_at` 倒序、无活跃按注册倒序。两处仍以 `id` 收尾保证稳定。
