@@ -14,8 +14,6 @@ from api.models import (
     ActivityOut,
     AdminUserOut,
     AnalyticsSummaryOut,
-    InviteCodeCreateIn,
-    InviteCodeOut,
     UserPasswordResetIn,
     UserPasswordResetOut,
     UserUpdateIn,
@@ -26,17 +24,12 @@ from core.constants import (
     CODE_CANNOT_DELETE_SELF,
     CODE_EMAIL_EXISTS,
     CODE_INVALID_TIMESTAMP,
-    CODE_INVITE_CODE_IN_USE,
     CODE_LAST_ADMIN_REQUIRED,
     CODE_NOT_FOUND,
     DETAIL_CANNOT_CHANGE_OWN_ROLE,
     DETAIL_CANNOT_DELETE_SELF,
     DETAIL_EMAIL_EXISTS,
     DETAIL_INVALID_TIMESTAMP,
-    DETAIL_INVITE_CODE_DELETED,
-    DETAIL_INVITE_CODE_IN_USE,
-    DETAIL_INVITE_CODE_NOT_FOUND,
-    DETAIL_INVITE_CODES_CREATED,
     DETAIL_LAST_ADMIN_REQUIRED,
     DETAIL_PASSWORD_RESET,
     DETAIL_TIMESTAMP_RANGE,
@@ -45,9 +38,6 @@ from core.constants import (
 )
 from core.permissions import (
     ACTIVITY_READ_ANY,
-    INVITE_CODE_CREATE_ANY,
-    INVITE_CODE_DELETE_ANY,
-    INVITE_CODE_READ_ANY,
     USER_DELETE_ANY,
     USER_READ_ANY,
     USER_RESET_PASSWORD_ANY,
@@ -57,12 +47,6 @@ from core.utils import sqlite_timestamp
 from infra.db import Database
 from infra.passwords import generate_temporary_password, hash_password
 from services.analytics_ledger import load_summary
-from services.invite_codes import (
-    delete_unused,
-    generate_invite_codes,
-    insert_codes,
-    list_codes,
-)
 from tasks.activity_retention import ACTIVITY_RETENTION_DAYS
 
 router = APIRouter()
@@ -138,68 +122,6 @@ def _parse_timestamp_bound(raw: str) -> str:
             moment = moment.replace(tzinfo=UTC)
         return sqlite_timestamp(moment.astimezone(UTC))
     return sqlite_timestamp(datetime.fromtimestamp(millis / 1000, UTC))
-
-
-@router.post("/invite-codes", status_code=status.HTTP_201_CREATED)
-async def create_invite_codes(
-    payload: InviteCodeCreateIn,
-    admin: dict = Depends(require_permission(INVITE_CODE_CREATE_ANY)),
-    db: Database = Depends(get_db),
-) -> JSONResponse:
-    codes = generate_invite_codes(
-        payload.role, payload.count, payload.expires_in_days, payload.note
-    )
-    rows = await insert_codes(db, codes, created_by=admin["id"])
-    return success(
-        [InviteCodeOut(**row).model_dump() for row in rows],
-        status_code=status.HTTP_201_CREATED,
-        detail=DETAIL_INVITE_CODES_CREATED,
-    )
-
-
-@router.get("/invite-codes")
-async def list_invite_codes(
-    status_filter: Literal["unused", "used", "expired"] | None = Query(
-        default=None, alias="status"
-    ),
-    role: Literal["internal", "admin"] | None = Query(default=None),
-    page: tuple[int, int] = Depends(pagination),
-    _legacy: None = Depends(reject_legacy_paging),
-    admin: dict = Depends(require_permission(INVITE_CODE_READ_ANY)),
-    db: Database = Depends(get_db),
-) -> JSONResponse:
-    limit, offset = page
-    rows, total = await list_codes(
-        db, status=status_filter, role=role, limit=limit + 1, offset=offset
-    )
-    items, has_next = split_page(rows, limit)
-    return success(
-        {
-            "items": [InviteCodeOut(**row).model_dump() for row in items],
-            "has_next": has_next,
-            "total": total,
-        }
-    )
-
-
-@router.delete("/invite-codes/{code}")
-async def delete_invite_code(
-    code: str,
-    admin: dict = Depends(require_permission(INVITE_CODE_DELETE_ANY)),
-    db: Database = Depends(get_db),
-) -> JSONResponse:
-    result = await delete_unused(db, code)
-    if result == "not_found":
-        raise ApiError(
-            CODE_NOT_FOUND, DETAIL_INVITE_CODE_NOT_FOUND, status.HTTP_404_NOT_FOUND
-        )
-    if result == "used":
-        raise ApiError(
-            CODE_INVITE_CODE_IN_USE,
-            DETAIL_INVITE_CODE_IN_USE,
-            status.HTTP_409_CONFLICT,
-        )
-    return success({"code": code}, detail=DETAIL_INVITE_CODE_DELETED)
 
 
 @router.get("/users")

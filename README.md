@@ -44,7 +44,10 @@ src/
       auth.py               register, login, /auth/me (GET, PATCH)
       posts.py              post list/detail/create/update/delete, batch delete
       comments.py           comment list/create/delete (soft delete with replies)
-      admin.py              invite codes, users, activity log
+      admin.py              users, activity log, analytics summary
+      invites.py            invite code create/list/delete
+      memos.py              self-scoped memos CRUD + summary
+      consumables.py        consumable items, cycles, finish
       activity.py           client activity ingestion with per-user throttling
       clips.py              shareable clipboard snippets on the D1 cache (24h TTL)
   services/

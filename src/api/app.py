@@ -14,6 +14,7 @@ from api.routers import (
     clips,
     comments,
     consumables,
+    invites,
     memos,
     posts,
 )
@@ -52,6 +53,7 @@ api.include_router(posts.router, prefix="/posts", tags=["posts"])
 api.include_router(comments.router, prefix="/posts", tags=["comments"])
 api.include_router(comments.delete_router, prefix="/comments", tags=["comments"])
 api.include_router(admin.router, prefix="/admin", tags=["admin"])
+api.include_router(invites.router, prefix="/admin", tags=["admin"])
 api.include_router(activity.router, prefix="/activity", tags=["activity"])
 api.include_router(memos.router, prefix="/memos", tags=["memos"])
 api.include_router(consumables.router, prefix="/consumables", tags=["consumables"])
