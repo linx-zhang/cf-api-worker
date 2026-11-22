@@ -34,6 +34,7 @@ from core.constants import (
     DETAIL_INVITE_CODE_CONFLICT,
     DETAIL_INVITE_CODE_INVALID,
     DETAIL_LOGIN_RATE_LIMITED,
+    DETAIL_REGISTER_RATE_LIMITED,
 )
 from core.permissions import ACCOUNT_UPDATE_SELF, permissions_for_role
 from core.security import create_access_token
@@ -56,17 +57,52 @@ LOGIN_WINDOW_SECONDS = 15 * 60
 LOGIN_IP_LIMIT = 10
 LOGIN_ACCOUNT_LIMIT = 5
 
+# Registration is open, so the hash is the expensive step an unauthenticated
+# caller can trigger. A coarse per-IP quota runs before any invite lookup or
+# PBKDF2 work; 5/hour is far above normal sign-up use on a personal site.
+REGISTER_WINDOW_SECONDS = 60 * 60
+REGISTER_IP_LIMIT = 5
+
 
 def _cache(db: Database) -> Cache:
     return Cache(db, namespace="auth")
 
 
-def _login_window() -> tuple[str, int]:
-    """Current window id plus the seconds left in it, same shape as clips."""
+def _window(seconds: int) -> tuple[str, int]:
+    """Current fixed-window id plus seconds left, shared by auth throttles."""
     now = int(utc_now().timestamp())
-    stamp = now // LOGIN_WINDOW_SECONDS
-    remaining = LOGIN_WINDOW_SECONDS - now % LOGIN_WINDOW_SECONDS
+    stamp = now // seconds
+    remaining = seconds - now % seconds
     return str(stamp), remaining + 1
+
+
+def _login_window() -> tuple[str, int]:
+    return _window(LOGIN_WINDOW_SECONDS)
+
+
+def _register_window() -> tuple[str, int]:
+    return _window(REGISTER_WINDOW_SECONDS)
+
+
+async def _enforce_registration_limit(db: Database, request: Request) -> None:
+    """Count this attempt before the invite lookup / password hash.
+
+    No client ip means local/test traffic: skip rather than bucket every caller
+    under one shared key. Cloudflare always sets one in production.
+    """
+    ip = client_ip(request)
+    if ip is None:
+        return
+    cache = _cache(db)
+    window, ttl = _register_window()
+    hits = await cache.record_hit(f"register:ip:{ip}:{window}", ttl)
+    if hits > REGISTER_IP_LIMIT:
+        raise ApiError(
+            CODE_RATE_LIMITED,
+            DETAIL_REGISTER_RATE_LIMITED,
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            headers={"Retry-After": str(ttl)},
+        )
 
 
 def _account_bucket(email: str) -> str:
@@ -110,9 +146,12 @@ async def _claim_invite(db: Database, code: str) -> dict:
 @router.post("/register", status_code=status.HTTP_201_CREATED)
 async def register(
     payload: RegisterIn,
+    request: Request,
     db: Database = Depends(get_db),
     settings: Settings = Depends(get_settings),
 ) -> JSONResponse:
+    await _enforce_registration_limit(db, request)
+
     role = "user"
     invite = None
     if payload.invite_code:

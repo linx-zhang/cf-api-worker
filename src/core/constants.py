@@ -57,6 +57,7 @@ DETAIL_INVALID_EMAIL_REASON = "invalid email address"
 DETAIL_EMAIL_EXISTS = "email is already registered"
 DETAIL_INVALID_CREDENTIALS = "email or password is incorrect"
 DETAIL_LOGIN_RATE_LIMITED = "too many login attempts; try again shortly"
+DETAIL_REGISTER_RATE_LIMITED = "too many registration attempts; try again shortly"
 DETAIL_INVITE_CODE_INVALID = "invitation code is invalid, expired or already used"
 DETAIL_INVITE_CODE_CONFLICT = "invitation code was used concurrently, please retry"
 

@@ -83,16 +83,35 @@ def _network_context(request: Request) -> dict[str, str | None]:
 
 
 async def _seconds_since_last_batch(
-    db: Database, column: str, value: object
+    db: Database, column: str, value: object, event_type: str | None = None
 ) -> int | None:
     """Age of the newest batch for ``column = value``, or ``None`` if none."""
+    where = f"{column} = ?"
+    params: list[object] = [value]
+    if event_type is not None:
+        where += " AND type = ?"
+        params.append(event_type)
     row = await db.fetch_one(
         "SELECT strftime('%s', 'now') - strftime('%s', MAX(created_at)) AS age "
-        f"FROM activity_events WHERE {column} = ?",
-        (value,),
+        f"FROM activity_events WHERE {where}",
+        tuple(params),
     )
     age = row["age"] if row else None
     return None if age is None else max(0, int(age))
+
+
+async def _page_leave_bypass_allowed(
+    db: Database, column: str, value: object, window: int
+) -> bool:
+    """One page_leave may pass per throttle window, not unlimited many.
+
+    The normal batch throttle would drop the unload event whenever a heartbeat
+    or page_view landed seconds earlier. Keeping the duration is worth one
+    extra batch per window; a client that keeps sending page_leave is stopped
+    by this second check instead of writing forever.
+    """
+    age = await _seconds_since_last_batch(db, column, value, "page_leave")
+    return age is None or age >= window
 
 
 async def _insert_events(db: Database, rows: list[tuple]) -> None:
@@ -134,21 +153,29 @@ async def record_activity(
 ) -> JSONResponse:
     """Store 1-50 client events for the current user.
 
-    Batches are throttled to one per ``RATE_LIMIT_SECONDS`` per user; extra
-    heartbeats are dropped with 429 instead of multiplying writes. A batch that
-    contains ``page_leave`` is always stored, because it carries the only
-    ``duration_ms`` value and losing it would skew time-on-page.
+    Batches are throttled to one per ``RATE_LIMIT_SECONDS`` per user. A batch
+    containing ``page_leave`` gets one extra chance per window so an unload
+    right after a heartbeat still carries its ``duration_ms``; repeated
+    page_leave batches are then held to the same rate.
     """
     has_page_leave = any(event.type == "page_leave" for event in payload.events)
-    if not has_page_leave:
-        age = await _seconds_since_last_batch(db, "user_id", user["id"])
-        if age is not None and age < RATE_LIMIT_SECONDS:
-            raise ApiError(
-                CODE_RATE_LIMITED,
-                DETAIL_ACTIVITY_RATE_LIMITED,
-                status.HTTP_429_TOO_MANY_REQUESTS,
-                headers={"Retry-After": str(RATE_LIMIT_SECONDS - age)},
+    age = await _seconds_since_last_batch(db, "user_id", user["id"])
+    if (
+        age is not None
+        and age < RATE_LIMIT_SECONDS
+        and (
+            not has_page_leave
+            or not await _page_leave_bypass_allowed(
+                db, "user_id", user["id"], RATE_LIMIT_SECONDS
             )
+        )
+    ):
+        raise ApiError(
+            CODE_RATE_LIMITED,
+            DETAIL_ACTIVITY_RATE_LIMITED,
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            headers={"Retry-After": str(RATE_LIMIT_SECONDS - age)},
+        )
 
     rows = _event_rows(payload, user["id"], _network_context(request))
     await _insert_events(db, rows)
@@ -195,15 +222,23 @@ async def record_visitor_activity(
         )
 
     has_page_leave = any(event.type == "page_leave" for event in payload.events)
-    if not has_page_leave:
-        age = await _seconds_since_last_batch(db, "ip", ip)
-        if age is not None and age < VISITOR_RATE_LIMIT_SECONDS:
-            raise ApiError(
-                CODE_RATE_LIMITED,
-                DETAIL_ACTIVITY_VISITOR_LIMITED,
-                status.HTTP_429_TOO_MANY_REQUESTS,
-                headers={"Retry-After": str(VISITOR_RATE_LIMIT_SECONDS - age)},
+    age = await _seconds_since_last_batch(db, "ip", ip)
+    if (
+        age is not None
+        and age < VISITOR_RATE_LIMIT_SECONDS
+        and (
+            not has_page_leave
+            or not await _page_leave_bypass_allowed(
+                db, "ip", ip, VISITOR_RATE_LIMIT_SECONDS
             )
+        )
+    ):
+        raise ApiError(
+            CODE_RATE_LIMITED,
+            DETAIL_ACTIVITY_VISITOR_LIMITED,
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            headers={"Retry-After": str(VISITOR_RATE_LIMIT_SECONDS - age)},
+        )
 
     rows = _event_rows(payload, None, context)
     await _insert_events(db, rows)
