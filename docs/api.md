@@ -5,7 +5,7 @@
 > 改路由 / 改字段 / 改权限码时，同一笔提交里改这里（`scripts/check-api-doc.py` 可以核对端点表有没有漏）。
 >
 > 生成式文档的先例见 `docs/schema.md`：那是从线上 D1 导出的库结构，改表只能走 `migrations/`。
-> 这份则是接口层——路由声明在代码里是分散的（7 个 router + `app.py` 的挂载前缀），
+> 这份则是接口层——路由声明在代码里是分散的（9 个 router 模块 + `app.py` 的挂载前缀），
 > 所以用一张表把它们收拢，代价是必须人工跟着改。
 
 Base URL：`https://linx-api-78i.pages.dev`（生产）。CORS `allow_origins=["*"]`，预检返回 `204`。
@@ -60,8 +60,8 @@ Base URL：`https://linx-api-78i.pages.dev`（生产）。CORS `allow_origins=["
 | POST | `/api/clips` | 登录 | `{title ≤80（默认空）, body 1-20000}` | 201 `{code, title, body, created_at, expires_at}` |
 | GET | `/api/clips/{code}` | 公开 | `code` 必须是 uuid4 的 32 位十六进制 | `{code, title, body, created_at, expires_at}` |
 | DELETE | `/api/clips/{code}` | 本人 `clip:delete:own` 或 `clip:delete:any` | — | `{code}` |
-| GET | `/api/memos` | 登录 | `limit/offset`、`done?: bool` | `{items: MemoOut[], has_next}` |
-| GET | `/api/memos/summary` | 登录 | — | `{pending, done, due}` |
+| GET | `/api/memos` | 登录 | `limit/offset`、`done?: bool`、`due_from?/due_to?`（含端点，UTC `YYYY-MM-DD HH:MM:SS`）、`undated?: bool`（只取无到期日，不能与日期边界同用） | `{items: MemoOut[], has_next}` |
+| GET | `/api/memos/summary` | 登录 | — | `{pending, done, due, undated}` |
 | POST | `/api/memos` | 登录 | `{body 1-2000, due_at? "YYYY-MM-DD HH:MM:SS"}`（UTC） | 201 `MemoOut` |
 | PATCH | `/api/memos/{memo_id}` | 登录 | `{body?, done?, due_at?}`，至少一项 | `MemoOut` |
 | DELETE | `/api/memos/{memo_id}` | 登录 | — | `{id}` |
@@ -154,10 +154,11 @@ Base URL：`https://linx-api-78i.pages.dev`（生产）。CORS `allow_origins=["
 
 | 位置 | 窗口 | 触发后 |
 | --- | --- | --- |
-| `POST /activity` | 每用户 10 秒一批；含 `page_leave` 的批次永不过滤 | 429 `rate_limited` + `Retry-After` |
-| `POST /activity/visitor` | 每 IP 30 秒一批；同上 | 429 `rate_limited` + `Retry-After` |
+| `POST /activity` | 每用户 10 秒一批；含 `page_leave` 的批次每个窗口额外放行一次（且该用户上一条 `page_leave` 已隔一个窗口） | 429 `rate_limited` + `Retry-After` |
+| `POST /activity/visitor` | 每 IP 30 秒一批；`page_leave` 同样每个窗口额外放行一次（且该 IP 上一条 `page_leave` 已隔一个窗口） | 429 `rate_limited` + `Retry-After` |
 | `POST /clips` | 每用户 10 秒一条（cache 里的 `throttle:<id>`） | 429 `rate_limited` + `Retry-After: 10` |
 | `GET /clips/{code}` | 每分钟每 IP 60 次、每 code 120 次（固定一分钟窗口） | 429 `rate_limited` + `Retry-After` |
+| `POST /auth/register` | 每 IP 1 小时 5 次（固定窗口，`Cache.record_hit`，在读邀请码与算密码哈希之前） | 429 `rate_limited` + `Retry-After` |
 | `POST /auth/login` | 15 分钟固定窗口，每 IP 10 次、每账号 5 次（含成功登录，计数在查库前） | 429 `rate_limited` + `Retry-After` |
 | `GET /admin/analytics/summary` | 结果缓存 60 秒（key `analytics:summary:v1:<days>`）；缓存未命中时读账本 `analytics:ledger:v2` + 折叠 `cursor < id <= MAX(id)` 的尾巴，尾巴 > 500 行走全量重建 | 不报错，读到旧值 |
 

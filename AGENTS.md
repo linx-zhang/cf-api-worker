@@ -67,15 +67,18 @@ If the application uses Durable Objects or Workflows, refer to the relevant best
 
 个人站 `api-worker`：FastAPI + D1，入口 `src/entry.py`，D1 `api-worker-db`，两个 cron（UTC）：`15 18 * * *` 日更清理、`0 * * * *` 每小时折分析账本。
 
-## 上线前必跑（Windows，PowerShell，无 CI）
+## 上线前必跑（Windows，PowerShell；CI 验、手工部署）
+
+push `main`、PR、手动触发会跑 `.github/workflows/ci.yml`：`uv sync --frozen`、pytest、`ruff check src tests scripts`、`scripts/check-api-doc.py`；`tests/test_migrations.py` 另查迁移文件命名/编号连续/非空。**CI 只验不部署，也不碰线上 D1**。
 
 ```powershell
 $env:Path = "C:\Users\LinxZhang\.local\bin;C:\Program Files\nodejs;C:\Windows\System32;C:\Windows;" + $env:Path
 $env:UV_PYTHON = "3.14"
 Set-Location -LiteralPath "D:\this_code\cloudflare-workers\api-worker"
 
-uv run --frozen pytest -q              # 132 passed
-uv run --frozen ruff check src tests   # All checks passed
+uv run --frozen pytest -q              # 143 passed
+uv run --frozen ruff check src tests scripts   # All checks passed
+uv run --frozen python scripts/check-api-doc.py  # routes: 43 doc rows: 43
 
 # 仅在新增 migrations/*.sql 时；不要加 --yes（会吐 help 并崩溃），改用 y 管道
 "y" | .\node_modules\.bin\wrangler.cmd d1 migrations apply api-worker-db --remote
