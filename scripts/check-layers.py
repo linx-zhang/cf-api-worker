@@ -51,22 +51,34 @@ def layer_of(path: Path) -> str:
     return head if head in LAYERS else "entry"
 
 
+def _project_head(module: str) -> str:
+    """Return the project layer for a dotted module path.
+
+    Runtime imports use ``services.x``; tests or tooling sometimes spell the
+    same module as ``src.services.x``. Both forms are checked so the gate cannot
+    be bypassed by the longer prefix.
+    """
+    parts = module.split(".")
+    if parts and parts[0] == "src":
+        parts = parts[1:]
+    return parts[0] if parts else ""
+
+
 def imported_layers(tree: ast.AST) -> list[tuple[int, str]]:
     """Yield ``(lineno, top_level_package)`` for absolute project imports."""
     found: list[tuple[int, str]] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom):
             if node.level:
-                # Relative imports stay inside the current package; the
-                # absolute-path policy is enforced elsewhere.
+                # Relative imports cannot cross sibling top-level packages
+                # (``..services`` would escape the module root).
                 continue
-            module = node.module or ""
-            head = module.split(".", 1)[0]
+            head = _project_head(node.module or "")
             if head in LAYERS:
                 found.append((node.lineno, head))
         elif isinstance(node, ast.Import):
             for alias in node.names:
-                head = alias.name.split(".", 1)[0]
+                head = _project_head(alias.name)
                 if head in LAYERS:
                     found.append((node.lineno, head))
     return found
