@@ -33,7 +33,7 @@ src/tasks/cron.py  ──►  src/tasks/*  ──►  services / infra
 |---|---|---|---|
 | entry | `src/entry.py` | Worker 入口、ASGI/cron 转接、geo 头 | 业务判断、SQL |
 | api | `src/api/` | 路由、认证依赖、Pydantic 校验、响应封装、单资源 SQL | 跨资源的领域编排、定时任务 |
-| services | `src/services/` | 被 HTTP 与 cron 共用的领域逻辑、分析账本、邀请码 | HTTP 状态码、`Request` 对象 |
+| services | `src/services/` | 被 HTTP 与 cron 共用的领域逻辑、分析账本、邀请码、简历分享 | HTTP 状态码、`Request` 对象 |
 | infra | `src/infra/` | D1 包装、缓存、配置、密码学适配 | 业务语义、权限判断 |
 | core | `src/core/` | 权限码、契约常量、JWT/PBKDF2 原语、时间工具 | 任何网络 / D1 / 框架依赖 |
 | tasks | `src/tasks/` | cron 编排与批处理清理 | 被 HTTP 直接调用 |
@@ -128,6 +128,7 @@ uv run --frozen python scripts/check-layers.py
 | `tests/test_limits.py` | 登录/注册/活动限流与 `page_leave` 窗口 |
 | `tests/test_memos.py` | 备忘录 CRUD、月历窗口、`undated` |
 | `tests/test_consumables.py` | 消耗品周期、日期边界、409 |
+| `tests/test_resumes.py` | 简历 CRUD、默认切换、复制、分享过期/撤销、公开形状 |
 | `tests/test_analytics_ledger.py` | 账本与全量参考实现逐字段相等 |
 | `tests/test_responses.py` | 统一 envelope、500 日志、request id |
 | `tests/test_migrations.py` | 迁移命名/编号/非空 |

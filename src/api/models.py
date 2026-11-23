@@ -679,3 +679,109 @@ class ClipOut(BaseModel):
     body: str
     created_at: str
     expires_at: str
+
+
+# --- Resume management ------------------------------------------------------
+
+RESUME_TITLE_MAX = 100
+RESUME_NOTE_MAX = 200
+RESUME_HTML_MAX = 50_000
+RESUME_SHARE_MAX_MINUTES = 30 * 24 * 60
+
+
+class ResumeIn(BaseModel):
+    """新建简历：正文是 HTML，清洗只在渲染端做，库里保留作者原文。"""
+
+    title: str = Field(min_length=1, max_length=RESUME_TITLE_MAX)
+    note: str = Field(default="", max_length=RESUME_NOTE_MAX)
+    content_html: str = Field(min_length=1, max_length=RESUME_HTML_MAX)
+
+    @field_validator("title")
+    @classmethod
+    def _title(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("title must not be blank")
+        return value
+
+    @field_validator("note")
+    @classmethod
+    def _note(cls, value: str) -> str:
+        return value.strip()
+
+    @field_validator("content_html")
+    @classmethod
+    def _content(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("content_html must not be blank")
+        return value
+
+
+class ResumeUpdateIn(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=RESUME_TITLE_MAX)
+    note: str | None = Field(default=None, max_length=RESUME_NOTE_MAX)
+    content_html: str | None = Field(
+        default=None, min_length=1, max_length=RESUME_HTML_MAX
+    )
+
+    @field_validator("title")
+    @classmethod
+    def _title(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            raise ValueError("title must not be blank")
+        return value
+
+    @field_validator("note")
+    @classmethod
+    def _note(cls, value: str | None) -> str | None:
+        return None if value is None else value.strip()
+
+    @field_validator("content_html")
+    @classmethod
+    def _content(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if not value.strip():
+            raise ValueError("content_html must not be blank")
+        return value
+
+    @model_validator(mode="after")
+    def _at_least_one(self) -> ResumeUpdateIn:
+        if self.title is None and self.note is None and self.content_html is None:
+            raise ValueError("at least one field is required")
+        return self
+
+
+class ResumeOut(BaseModel):
+    id: int
+    title: str
+    note: str
+    is_default: bool
+    created_at: str
+    updated_at: str
+
+
+class ResumeDetailOut(ResumeOut):
+    content_html: str
+
+
+class ResumePublicOut(BaseModel):
+    """公开响应：不带 note / id / 创建人，只给渲染所需的最小形状。"""
+
+    title: str
+    content_html: str
+    updated_at: str
+
+
+class ResumeShareIn(BaseModel):
+    expires_in_minutes: int = Field(default=24 * 60, ge=1, le=RESUME_SHARE_MAX_MINUTES)
+
+
+class ResumeShareOut(BaseModel):
+    code: str
+    expires_at: str
+    created_at: str
+

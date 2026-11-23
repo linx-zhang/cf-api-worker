@@ -5,7 +5,7 @@
 >
 > 为什么用这种生成式文档而不是手写 ORM 模型：项目里没有 ORM，手写模型只能靠记忆维护，会和真实库悄悄对不上；这份文档每次都是从库里读出来的。
 
-共 9 张表：`activity_events`、`cache_entries`、`comments`、`consumable_cycles`、`consumable_items`、`invite_codes`、`memos`、`posts`、`users`
+共 11 张表：`activity_events`、`cache_entries`、`comments`、`consumable_cycles`、`consumable_items`、`invite_codes`、`memos`、`posts`、`resume_shares`、`resumes`、`users`
 
 ## activity_events
 
@@ -189,6 +189,49 @@
 外键：
 
 - `author_id` → `users.id`
+
+## resume_shares
+
+| 列 | 类型 | 可空 | 默认 | 主键 |
+| --- | --- | --- | --- | --- |
+| `code` | TEXT | 否 |  | 1 |
+| `resume_id` | INTEGER | 否 |  |  |
+| `expires_at` | TEXT | 否 |  |  |
+| `created_by` | INTEGER | 是 |  |  |
+| `created_at` | TEXT | 否 | `datetime('now')` |  |
+| `revoked_at` | TEXT | 是 |  |  |
+
+索引：
+
+- `idx_resume_shares_resume_created`（普通）：`resume_id, created_at`
+
+外键：
+
+- `created_by` → `users.id`
+- `resume_id` → `resumes.id`
+
+## resumes
+
+| 列 | 类型 | 可空 | 默认 | 主键 |
+| --- | --- | --- | --- | --- |
+| `id` | INTEGER | 否 |  | 1 |
+| `title` | TEXT | 否 |  |  |
+| `note` | TEXT | 否 | `''` |  |
+| `content_html` | TEXT | 否 |  |  |
+| `is_default` | INTEGER | 否 | `0` |  |
+| `created_by` | INTEGER | 是 |  |  |
+| `created_at` | TEXT | 否 | `datetime('now')` |  |
+| `updated_at` | TEXT | 否 | `datetime('now')` |  |
+| `deleted_at` | TEXT | 是 |  |  |
+
+索引：
+
+- `idx_resumes_live_created_id`（普通）：``
+- `idx_resumes_single_default`（唯一）：``
+
+外键：
+
+- `created_by` → `users.id`
 
 ## users
 

@@ -123,6 +123,18 @@ DETAIL_CLIP_RATE_LIMITED = (
 )
 DETAIL_CLIP_READ_RATE_LIMITED = "too many reads of a shared clip; try again shortly"
 
+# Resume management (/profile + time-limited share links).
+DETAIL_RESUME_NOT_FOUND = "resume not found"
+DETAIL_RESUME_SHARE_NOT_FOUND = "resume share link is invalid or expired"
+DETAIL_RESUME_DEFAULT_DELETE = (
+    "default resume cannot be deleted; set another resume as default first"
+)
+DETAIL_RESUME_COPIED = "resume copied"
+DETAIL_RESUME_DEFAULT_SET = "default resume updated"
+DETAIL_RESUME_SHARE_CREATED = "resume share link created"
+DETAIL_RESUME_SHARE_REVOKED = "resume share link revoked"
+DETAIL_RESUME_READ_RATE_LIMITED = "too many reads of a shared resume; try again shortly"
+
 # Client activity logging.
 DETAIL_ACTIVITY_RECORDED = "activity recorded"
 DETAIL_INVALID_EVENT_TYPE = (

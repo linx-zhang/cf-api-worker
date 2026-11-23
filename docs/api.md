@@ -60,6 +60,18 @@ Base URL：`https://linx-api-78i.pages.dev`（生产）。CORS `allow_origins=["
 | POST | `/api/clips` | 登录 | `{title ≤80（默认空）, body 1-20000}` | 201 `{code, title, body, created_at, expires_at}` |
 | GET | `/api/clips/{code}` | 公开 | `code` 必须是 uuid4 的 32 位十六进制 | `{code, title, body, created_at, expires_at}` |
 | DELETE | `/api/clips/{code}` | 本人 `clip:delete:own` 或 `clip:delete:any` | — | `{code}` |
+| GET | `/api/resumes/current` | 公开 | — | `ResumePublicOut`；没有默认简历时 404 |
+| GET | `/api/resumes/shared/{code}` | 公开 | `code` 为 12 位 `[A-Za-z0-9_-]` | `ResumePublicOut`；过期/撤销/简历已删统一 404 |
+| GET | `/api/resumes` | `resume:manage:any` | `limit/offset` | `{items: ResumeOut[], has_next, total}`（不含正文） |
+| POST | `/api/resumes` | `resume:manage:any` | `{title 1-100, note?≤200, content_html 1-50000}` | 201 `ResumeDetailOut` |
+| GET | `/api/resumes/{resume_id}` | `resume:manage:any` | — | `ResumeDetailOut` |
+| PATCH | `/api/resumes/{resume_id}` | `resume:manage:any` | `{title?, note?, content_html?}`，至少一项 | `ResumeDetailOut` |
+| DELETE | `/api/resumes/{resume_id}` | `resume:manage:any` | — | `{id}`；默认简历 409 |
+| POST | `/api/resumes/{resume_id}/copy` | `resume:manage:any` | — | 201 `ResumeDetailOut`（标题加「副本」，不继承默认） |
+| POST | `/api/resumes/{resume_id}/default` | `resume:manage:any` | — | `ResumeOut`；同时清掉旧默认 |
+| POST | `/api/resumes/{resume_id}/shares` | `resume:manage:any` | `{expires_in_minutes 1-43200，默认 1440}` | 201 `{code, expires_at, created_at}` |
+| GET | `/api/resumes/{resume_id}/shares` | `resume:manage:any` | — | `{code, expires_at, created_at}[]`（只列有效） |
+| DELETE | `/api/resumes/shares/{code}` | `resume:manage:any` | — | `{code}`；无效/已撤销 404 |
 | GET | `/api/memos` | 登录 | `limit/offset`、`done?: bool`、`due_from?/due_to?`（含端点，UTC `YYYY-MM-DD HH:MM:SS`）、`undated?: bool`（只取无到期日，不能与日期边界同用） | `{items: MemoOut[], has_next}` |
 | GET | `/api/memos/summary` | 登录 | — | `{pending, done, due, undated}` |
 | POST | `/api/memos` | 登录 | `{body 1-2000, due_at? "YYYY-MM-DD HH:MM:SS"}`（UTC） | 201 `MemoOut` |
@@ -83,7 +95,7 @@ Base URL：`https://linx-api-78i.pages.dev`（生产）。CORS `allow_origins=["
 | GET | `/api/admin/activity` | `activity:read:any` | `user_id?`、`type?: page_view\|heartbeat\|page_leave`、`from?`、`to?`、`limit/offset` | `{items: ActivityOut[], has_next}` |
 | GET | `/api/admin/analytics/summary` | `activity:read:any` | `days 1-90`（默认 7） | `AnalyticsSummaryOut` |
 
-> 路由挂载：`/api/auth`、`/api/posts`、`/api/comments`、`/api/admin`、`/api/activity`、`/api/memos`、`/api/clips`、`/api/consumables`
+> 路由挂载：`/api/auth`、`/api/posts`、`/api/comments`、`/api/admin`、`/api/activity`、`/api/memos`、`/api/clips`、`/api/consumables`、`/api/resumes`
 > （见 `src/api/app.py`）。`comments.py` 同时挂在 `/api/posts` 与 `/api/comments` 两个前缀下。
 
 ## 主要对象
@@ -112,6 +124,13 @@ Base URL：`https://linx-api-78i.pages.dev`（生产）。CORS `allow_origins=["
 
 **ConsumableCycleOut**：`{id, item_id, started_on, ended_on?, expected_days?, note?, created_at, updated_at, actual_days?}`；
 一个物品同时只允许一条 `ended_on` 为空的周期（partial unique index 兜底）。
+
+**ResumeOut**：`{id, title, note, is_default, created_at, updated_at}`（列表用，不含正文）。
+**ResumeDetailOut**：`ResumeOut` + `content_html`。
+**ResumePublicOut**：`{title, content_html, updated_at}`；公开读，不带 `id` / `note` / 创建人。
+分享链接是**活指针**：`GET /api/resumes/shared/{code}` 每次读当前简历内容，后台编辑立即生效；
+简历软删、链接过期或撤销都返回 404。`/api/resumes/current` 没有默认简历时同样 404，
+前端 `/profile` 据此回退到内置模板。
 
 **ActivityOut**：`{id, user_id?, user_email?, type, path, ts, duration_ms?, ip?, country?, created_at}`；
 匿名行的 `user_id` / `user_email` 为 `null`。
@@ -145,6 +164,7 @@ Base URL：`https://linx-api-78i.pages.dev`（生产）。CORS `allow_origins=["
 | `user:delete:any` | | ✓ |
 | `user:reset_password:any` | | ✓ |
 | `activity:read:any` | | ✓ |
+| `resume:manage:any` | | ✓ |
 
 `PUBLIC` 是描述未登录读权限的伪角色（`post:read:any`、`comment:read:any`），
 从不通过 `/api/auth/me` 下发。`/api/memos` 与 `POST /clips` 不设权限码：登录即可，
@@ -158,6 +178,7 @@ Base URL：`https://linx-api-78i.pages.dev`（生产）。CORS `allow_origins=["
 | `POST /activity/visitor` | 每 IP 30 秒一批；`page_leave` 同样每个窗口额外放行一次（且该 IP 上一条 `page_leave` 已隔一个窗口） | 429 `rate_limited` + `Retry-After` |
 | `POST /clips` | 每用户 10 秒一条（cache 里的 `throttle:<id>`） | 429 `rate_limited` + `Retry-After: 10` |
 | `GET /clips/{code}` | 每分钟每 IP 60 次、每 code 120 次（固定一分钟窗口） | 429 `rate_limited` + `Retry-After` |
+| `GET /resumes/shared/{code}` | 每分钟每 IP 30 次、每 code 60 次（固定一分钟窗口） | 429 `rate_limited` + `Retry-After` |
 | `POST /auth/register` | 每 IP 1 小时 5 次（固定窗口，`Cache.record_hit`，在读邀请码与算密码哈希之前） | 429 `rate_limited` + `Retry-After` |
 | `POST /auth/login` | 15 分钟固定窗口，每 IP 10 次、每账号 5 次（含成功登录，计数在查库前） | 429 `rate_limited` + `Retry-After` |
 | `GET /admin/analytics/summary` | 结果缓存 60 秒（key `analytics:summary:v1:<days>`）；缓存未命中时读账本 `analytics:ledger:v2` + 折叠 `cursor < id <= MAX(id)` 的尾巴，尾巴 > 500 行走全量重建 | 不报错，读到旧值 |
@@ -178,7 +199,8 @@ HTTP 状态只是传输层，业务含义看 `code`。
 | `invalid_credentials` | 401 | 登录邮箱或密码错（**不是**登录态失效） |
 | `unauthorized` | 401 | 缺 token / token 过期 / 早于 `token_invalidated_at` |
 | `forbidden` | 403 | 没有对应权限码 |
-| `not_found` | 404 | 资源不存在（含别人名下的 memo、clip、非法 code） |
+| `not_found` | 404 | 资源不存在（含别人名下的 memo、clip、非法 code、过期/撤销的简历分享） |
+| `conflict` | 409 | 默认简历不能删除（先设别的为默认） |
 | `method_not_allowed` | 405 | 路径存在但方法不对 |
 | `invalid_parent_comment` | 400 | `parent_id` 不属于该文章 |
 | `invite_code_in_use` | 400 | 已用掉的邀请码不能删 |
@@ -202,10 +224,12 @@ HTTP 状态只是传输层，业务含义看 `code`。
 | `src/api/memos.ts` | `/api/memos*` |
 | `src/api/consumables.ts` | `/api/consumables*` |
 | `src/api/clips.ts` | `/api/clips*` |
+| `src/api/resumes.ts` | `/api/resumes*`（后台管理与公开当前/分享） |
 | `src/api/admin.ts` | `/api/admin/*` |
 | `src/activity/` | `/api/activity`、`/api/activity/visitor` |
 
 前端 `src/constants.ts` 里的上限（`PAGE_SIZE`、`MEMO_BODY_MAX`、`POST_TITLE_MAX`、
 `COMMENT_BODY_MAX`、`CLIP_TITLE_MAX`、`CLIP_BODY_MAX`、`ACTIVITY_MAX_BATCH`、
-`ACTIVITY_MAX_VISITOR_BATCH`、`ACTIVITY_VISITOR_WINDOW_MS`、`BATCH_DELETE_MAX`）
+`ACTIVITY_MAX_VISITOR_BATCH`、`ACTIVITY_VISITOR_WINDOW_MS`、`BATCH_DELETE_MAX`、
+`RESUME_TITLE_MAX`、`RESUME_NOTE_MAX`、`RESUME_HTML_MAX`）
 逐条对应这里的模型约束；改后端上限必须先改前端常量，否则会出现「前端放行、后端 422」。

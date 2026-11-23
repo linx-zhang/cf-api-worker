@@ -44,6 +44,11 @@ ACTIVITY_READ_ANY = "activity:read:any"
 CLIP_DELETE_OWN = "clip:delete:own"
 CLIP_DELETE_ANY = "clip:delete:any"
 
+# Resume management is admin-only and deliberately one code: there is a single
+# administrator today, so splitting read/create/update/delete/share would only
+# add five places to keep in sync. Public reads stay unauthenticated.
+RESUME_MANAGE_ANY = "resume:manage:any"
+
 # Shared by every signed-in role.
 _MEMBER_PERMISSIONS = (
     ACCOUNT_READ_SELF,
@@ -70,6 +75,7 @@ _ADMIN_PERMISSIONS = (
     USER_RESET_PASSWORD_ANY,
     ACTIVITY_READ_ANY,
     CLIP_DELETE_ANY,
+    RESUME_MANAGE_ANY,
 )
 
 ROLE_PERMISSIONS: dict[str, tuple[str, ...]] = {

@@ -17,6 +17,7 @@ from api.routers import (
     invites,
     memos,
     posts,
+    resumes,
 )
 
 
@@ -58,6 +59,7 @@ api.include_router(activity.router, prefix="/activity", tags=["activity"])
 api.include_router(memos.router, prefix="/memos", tags=["memos"])
 api.include_router(consumables.router, prefix="/consumables", tags=["consumables"])
 api.include_router(clips.router, prefix="/clips", tags=["clips"])
+api.include_router(resumes.router, prefix="/resumes", tags=["resumes"])
 
 app.include_router(api)
 

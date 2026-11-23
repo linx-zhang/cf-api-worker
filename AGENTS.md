@@ -76,10 +76,10 @@ $env:Path = "C:\Users\LinxZhang\.local\bin;C:\Program Files\nodejs;C:\Windows\Sy
 $env:UV_PYTHON = "3.14"
 Set-Location -LiteralPath "D:\this_code\cloudflare-workers\api-worker"
 
-uv run --frozen pytest -q              # 143 passed
+uv run --frozen pytest -q              # 152 passed
 uv run --frozen ruff check src tests scripts   # All checks passed
 uv run --frozen python scripts/check-layers.py  # 应输出 Layer check OK
-uv run --frozen python scripts/check-api-doc.py  # routes: 43 doc rows: 43
+uv run --frozen python scripts/check-api-doc.py  # routes: 55 doc rows: 55
 
 # 仅在新增 migrations/*.sql 时；不要加 --yes（会吐 help 并崩溃），改用 y 管道
 "y" | .\node_modules\.bin\wrangler.cmd d1 migrations apply api-worker-db --remote
