@@ -76,7 +76,7 @@ $env:Path = "C:\Users\LinxZhang\.local\bin;C:\Program Files\nodejs;C:\Windows\Sy
 $env:UV_PYTHON = "3.14"
 Set-Location -LiteralPath "D:\this_code\cloudflare-workers\api-worker"
 
-uv run --frozen pytest -q              # 152 passed
+uv run --frozen pytest -q              # 157 passed
 uv run --frozen ruff check src tests scripts   # All checks passed
 uv run --frozen python scripts/check-layers.py  # 应输出 Layer check OK
 uv run --frozen python scripts/check-api-doc.py  # routes: 55 doc rows: 55
@@ -104,8 +104,8 @@ Invoke-WebRequest "https://api-worker.linx-zhang.workers.dev/api/posts?limit=3&o
 - **分层闸门**：`core ← infra ← services ← api/tasks`，`entry` 在最上层只做装配。CI 用 `scripts/check-layers.py` 查 AST import，`api` import `tasks`、低层反向 import 高层都会红；加文件前先读 `ARCHITECTURE.md`。
 - `src/api/models.py` 是契约常量真源；前端 `src/constants.ts` 是手抄副本，前端 CI 的 `scripts/check-contract.mjs` 会 clone 本仓库比对——**改常量先 push 本仓库**。
 - 纯规则（时间校验、权限码矩阵）抽在 `src/core/`，测试在 `tests/` 直跑 pytest，不碰 workerd。
-- 定时任务在 `src/tasks/`，日更按 activity 保留 → cache 清理 → memos 墓碑 → 分析账本的顺序挂在 `cron.py`；小时触发器只跑账本。
+- 定时任务在 `src/tasks/`，日更按 activity 保留 30 天 → cache 清理 → memos 墓碑 180 天 → 消耗品 cycles/items 墓碑 90 天（先 cycles 后 items）→ 失效简历分享短链立即删的顺序挂在 `cron.py`；日更**不折**分析账本，小时触发器只跑账本。`users`、`resumes`、`posts`、`comments`、`invite_codes` 永不清理。
 - **分析页读成本**：`services/analytics_ledger.py` 把 30 天窗口折成一行账本存在 `cache_entries`（key `analytics:ledger:v2`，`timeout=None`），页面读取 = 账本 + `id > cursor AND id <= MAX(id)` 的尾巴，内存折叠后渲染，暖读不写库；尾巴超过 `ANALYTICS_MAX_TAIL_ROWS`（500）改走全量重建。`services/analytics.py` 的 `build_summary` 只是参考实现，`tests/test_analytics_ledger.py` 对 `days=7` 与 `days=30` 都断言两条路径逐字段相等。账本里访客明细按**天**存（`actors[ident].days[day]`），所以两个窗口各自求和、不会把 30 天累计报进 7 天视图；改结构要换 key 后缀（v1 是只有窗口累计的旧形状）。窗口按**北京展示日**算（`_window_since`），不是滚动 30×24h，改这里要同步改账本裁剪。
 
-完整的上线清单、契约 10 项对照表、已知缺口，见前端仓库根目录 `AGENTS.md`。
+完整的上线清单、契约 13 项对照表、已知缺口，见前端仓库根目录 `AGENTS.md`。
 
