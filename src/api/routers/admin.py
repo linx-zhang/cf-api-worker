@@ -27,6 +27,7 @@ from core.constants import (
     CODE_INVALID_TIMESTAMP,
     CODE_LAST_ADMIN_REQUIRED,
     CODE_NOT_FOUND,
+    CODE_WEAK_PASSWORD,
     DETAIL_CANNOT_CHANGE_OWN_ROLE,
     DETAIL_CANNOT_DELETE_SELF,
     DETAIL_EMAIL_EXISTS,
@@ -36,7 +37,9 @@ from core.constants import (
     DETAIL_TIMESTAMP_RANGE,
     DETAIL_USER_DELETED,
     DETAIL_USER_NOT_FOUND,
+    DETAIL_WEAK_PASSWORD,
 )
+from core.password_policy import password_issue
 from core.permissions import (
     ACTIVITY_READ_ANY,
     USER_DELETE_ANY,
@@ -248,6 +251,14 @@ async def reset_user_password(
 
     generated = payload.password is None
     password = generate_temporary_password() if generated else payload.password
+    if not generated:
+        issue = password_issue(password, email=target["email"])
+        if issue is not None:
+            raise ApiError(
+                CODE_WEAK_PASSWORD,
+                DETAIL_WEAK_PASSWORD.format(reason=issue),
+                422,
+            )
     password_hash = await hash_password(password)
     reset_at = sqlite_timestamp()
     changed = await db.execute(

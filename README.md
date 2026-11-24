@@ -1,7 +1,7 @@
 <!-- [LLM SYSTEM INSTRUCTION & CONTEXT]
 Project: api-worker - a small blog/reporting backend running on Cloudflare Workers in Python.
 Stack: Cloudflare Workers (python_workers compat flag, Pyodide runtime) + FastAPI (pure-ASGI glue) + D1 (SQLite) + PyJWT + wrangler 4. No ORM: every query is hand-written SQL through src/infra/db.py.
-Layout: src/entry.py (Worker entry, Default entrypoint exported for wrangler) -> src/api/ (app.py router wiring, deps.py auth/permissions/client ip, models.py Pydantic schemas, responses.py envelope + error handlers, routers/) -> src/services/ (business rules that need SQL: invite_codes.py, visitor_paths.py, analytics.py for the read SQL, analytics_ledger.py for the ledger orchestration, analytics_merge.py for pure folding/rendering) -> src/core/ (permissions.py role->codes map, constants.py response codes/details, security.py JWT + PBKDF2, utils.py helpers) -> src/infra/ (db.py D1 wrapper, config.py env settings, passwords.py WebCrypto hashing) -> src/tasks/ (cron.py cron entry, activity_retention.py purge, cache_cleanup.py expired rows, memo_tombstone.py 180-day hard delete, consumable_tombstone.py 90-day hard delete, resume_share_cleanup.py invalid share links, analytics_ledger.py hourly fold).
+Layout: src/entry.py (Worker entry, Default entrypoint exported for wrangler) -> src/api/ (app.py router wiring, deps.py auth/permissions/client ip, models.py Pydantic schemas, responses.py envelope + error handlers, routers/) -> src/services/ (business rules that need SQL: invite_codes.py, visitor_paths.py, analytics.py for the read SQL, analytics_ledger.py for the ledger orchestration, analytics_merge.py for pure folding/rendering) -> src/core/ (permissions.py role->codes map, constants.py response codes/details, security.py JWT + PBKDF2, password_policy.py + common_passwords.py password rules and lazy blocklist, utils.py helpers) -> src/infra/ (db.py D1 wrapper, config.py env settings, passwords.py WebCrypto hashing) -> src/tasks/ (cron.py cron entry, activity_retention.py purge, cache_cleanup.py expired rows, memo_tombstone.py 180-day hard delete, consumable_tombstone.py 90-day hard delete, resume_share_cleanup.py invalid share links, analytics_ledger.py hourly fold).
 Envelope: every response is {"code": str, "detail": str, "data": any}; errors are raised as ApiError(code, detail, status) and rendered by handlers in api/responses.py (422 RequestValidationError, 404 not_found, 405 method_not_allowed, 500 internal_error).
 Routes: the endpoint table (method / path / auth / request / response) lives in docs/api.md and is the source of truth; `python scripts/check-api-doc.py` diffs it against the decorators. Quick list: GET /; POST /auth/register; POST /auth/login; GET /auth/me; PATCH /auth/me; POST /auth/logout; GET /posts (filters: q title fuzzy, author author fuzzy, author_id exact author); GET /posts/{post_id}; GET /posts/{post_id}/neighbors; POST /posts; POST /posts/batch-delete; PATCH /posts/{post_id}; DELETE /posts/{post_id}; GET /posts/{post_id}/comments; POST /posts/{post_id}/comments; DELETE /comments/{comment_id}; GET /memos; GET /memos/summary; POST /memos; PATCH /memos/{memo_id}; DELETE /memos/{memo_id}; GET /consumables; POST /consumables; PATCH /consumables/{item_id}; DELETE /consumables/{item_id}; GET /consumables/{item_id}/cycles; POST /consumables/{item_id}/cycles; POST /consumables/{item_id}/finish; PATCH /consumables/{item_id}/cycles/{cycle_id}; POST /clips; GET /clips/{code}; DELETE /clips/{code}; GET /resumes/current; GET /resumes/shared/{code}; GET|POST /resumes; GET|PATCH|DELETE /resumes/{resume_id}; POST /resumes/{resume_id}/copy; POST /resumes/{resume_id}/default; GET|POST /resumes/{resume_id}/shares; DELETE /resumes/shares/{code}; POST /activity; POST /activity/visitor; POST|GET /admin/invite-codes; DELETE /admin/invite-codes/{code}; GET /admin/users; PATCH /admin/users/{user_id}; POST /admin/users/{user_id}/reset-password; DELETE /admin/users/{user_id}; GET /admin/activity; GET /admin/analytics/summary.
 Permissions (resource:action:scope): user and internal both hold account:read:self, account:update:self, post:create:any, post:update:own, post:delete:own, comment:create:any, comment:delete:own, activity:write:self. admin holds those plus post:update:any, post:delete:any, comment:delete:any, invite_code:create:any, invite_code:read:any, invite_code:delete:any, user:read:any, user:update:any, user:delete:any, user:reset_password:any, activity:read:any, resume:manage:any. PUBLIC (never returned to clients) covers post:read:any and comment:read:any. /clips adds clip:delete:own for every signed-in role and clip:delete:any for admin, while POST /clips only needs a token (same shape as /memos); GET /clips/{code} is public because the code itself is the capability, and no route lists the stored snippets — so reads carry their own budget instead: 60/min per client ip and 120/min per code, fixed one-minute windows, answering 429 rate_limited with Retry-After. /memos is self-scoped and adds no permission code: every memo route requires a token and takes the owner from it, never from the request. /consumables is the same shape — token only, owner from the token, no permission code.
@@ -10,7 +10,7 @@ Schema: migrations/ is the single source of truth for the database shape. docs/s
 Maintenance: after any context reset, read `ARCHITECTURE.md` for the layer map and the "Maintenance checklist" section before changing the schema or adding a route - migrations, docs/schema.md, docs/api.md and the README migration table have to move together. `scripts/check-layers.py` enforces the one-way import direction (`core <- infra <- services <- api/tasks`); CI runs it after ruff.
 D1 binding: env.DB -> database name api-worker-db (configured in wrangler.jsonc).
 Commands: npx wrangler dev (local), npx wrangler d1 migrations apply api-worker-db --local|--remote, npx wrangler deploy, npx wrangler types. JWT_SECRET comes from .dev.vars locally and from a Worker secret in production.
-Conventions: soft delete via deleted_at on users/posts/comments; author display name resolves as nickname -> "first_name last_name" -> email local part, masked as "已注销" for deleted accounts; POST /activity is throttled to one batch per user per 10 seconds (429 rate_limited). A batch containing page_leave gets one extra chance per window, and only when that user's previous page_leave is already one window old; repeated page_leave then hits the same 429. POST /posts/batch-delete soft deletes 1-50 ids and reports per-id failures.
+Conventions: soft delete via deleted_at on users/posts/comments; author display name resolves as nickname -> "first_name last_name" -> email local part, masked as "已注销" for deleted accounts; registration and admin-chosen reset passwords reject weak values with weak_password (422), while login is deliberately exempt; POST /activity is throttled to one batch per user per 10 seconds (429 rate_limited). A batch containing page_leave gets one extra chance per window, and only when that user's previous page_leave is already one window old; repeated page_leave then hits the same 429. POST /posts/batch-delete soft deletes 1-50 ids and reports per-id failures.
 -->
 
 # api-worker
@@ -29,7 +29,7 @@ It runs on Cloudflare Workers in Python (Pyodide runtime) and uses FastAPI for r
 | HTTP | FastAPI mounted as an ASGI app from `src/entry.py` |
 | Database | D1 (SQLite), bound as `env.DB` |
 | Auth | JWT (PyJWT) carrying only the user id; roles are re-read from D1 on every request |
-| Passwords | PBKDF2-SHA256 via WebCrypto, pure-Python fallback for local scripts |
+| Passwords | PBKDF2-SHA256 via WebCrypto, pure-Python fallback for local scripts; 8-128 chars plus a common-password deny list on registration and reset |
 | Tooling | `wrangler` 4, `uv`, `ruff` |
 
 ## Project layout
@@ -64,6 +64,8 @@ src/
     permissions.py          permission codes and role -> codes mapping
     constants.py            response codes and detail strings (public contract)
     security.py             JWT issue/decode, PBKDF2 hashing primitives
+    password_policy.py      length/common-list/email/site/repeat rules shared by register and reset
+    common_passwords.py     gzip+base85 blocklist, decoded lazily once per Worker isolate
     utils.py                email normalization, display name resolution, timestamps
   infra/
     db.py                   D1 wrapper: fetch_one, fetch_all, execute, insert_returning
@@ -95,7 +97,7 @@ Every response, success or failure, looks like:
 ```
 
 * Success codes: `ok`.
-* Common error codes: `validation_error`, `invalid_email`, `invalid_role`, `invalid_invite_code`, `email_exists`, `invalid_credentials`, `unauthorized`, `forbidden`, `not_found`, `method_not_allowed`, `cannot_change_own_role`, `last_admin_required`, `cannot_delete_self`, `rate_limited`, `internal_error`.
+* Common error codes: `validation_error`, `invalid_email`, `invalid_password`, `weak_password`, `invalid_role`, `invalid_invite_code`, `email_exists`, `invalid_credentials`, `unauthorized`, `forbidden`, `not_found`, `method_not_allowed`, `cannot_change_own_role`, `last_admin_required`, `cannot_delete_self`, `rate_limited`, `internal_error`.
 * Validation failures return `422`, authorization failures `403`, missing resources `404`, throttling `429`.
 
 ## Routes
@@ -132,9 +134,15 @@ Unpaginated lists (`GET /posts/{post_id}/comments`) still return a bare array on
 
 `author_name` on posts and comments resolves as: `nickname` -> `"first_name last_name"` -> the local part of the email. Accounts with `deleted_at` set render as `已注销`. This is why changing an email no longer changes how the author is displayed once a nickname or name is set.
 
+### Password policy
+
+Registration and administrator-chosen reset passwords must be 8-128 characters and pass `core/password_policy.py`: not in the 20,000-entry common-password blocklist (after leet/trailing-noise normalization), not purely repeated or sequential, not containing the account email or its local part, and not containing this site's names. The blocklist lives in `core/common_passwords.py` as gzip+base85 and is decoded once per isolate on first use, mirroring Django's `CommonPasswordValidator`.
+
+Login deliberately does not call the policy: existing accounts may predate it, and re-checking on login would lock them out. A blank administrator reset still generates a 16-character temporary password.
+
 ### Admin password reset
 
-`POST /admin/users/{user_id}/reset-password` requires `user:reset_password:any` (admins only). The body may carry `{"password": "..."}` (8-128 characters) to set a password chosen by the administrator; when the field is omitted the server generates a 16-character temporary one from an unambiguous alphabet (no `0/O` or `1/l/I`).
+`POST /admin/users/{user_id}/reset-password` requires `user:reset_password:any` (admins only). The body may carry `{"password": "..."}` (8-128 characters, must also pass the password policy) to set a password chosen by the administrator; when the field is omitted the server generates a 16-character temporary one from an unambiguous alphabet (no `0/O` or `1/l/I`).
 
 Only the PBKDF2 hash is written, and the effective plaintext is returned exactly once as `data.password` with `data.generated` telling the two cases apart — nothing is stored in clear text, so a value that is lost means resetting again.
 

@@ -98,14 +98,14 @@ def test_registration_is_ip_limited_before_hashing(api, monkeypatch):
     for index in range(2):
         response = api.post(
             "/api/auth/register",
-            {"email": f"new{index}@example.com", "password": "password123"},
+            {"email": f"new{index}@example.com", "password": "Mango-Orbit-7421"},
             headers=headers,
         )
         assert response.status == 201
 
     blocked = api.post(
         "/api/auth/register",
-        {"email": "new2@example.com", "password": "password123"},
+        {"email": "new2@example.com", "password": "Mango-Orbit-7421"},
         headers=headers,
     )
     assert blocked.status == 429
@@ -114,7 +114,7 @@ def test_registration_is_ip_limited_before_hashing(api, monkeypatch):
 
     other_ip = api.post(
         "/api/auth/register",
-        {"email": "new3@example.com", "password": "password123"},
+        {"email": "new3@example.com", "password": "Mango-Orbit-7421"},
         headers={"cf-connecting-ip": "198.51.100.8"},
     )
     assert other_ip.status == 201

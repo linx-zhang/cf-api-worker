@@ -40,7 +40,7 @@ Base URL：`https://linx-api-78i.pages.dev`（生产）。CORS `allow_origins=["
 | 方法 | 路径 | 鉴权 | 请求 | 响应 `data` |
 | --- | --- | --- | --- | --- |
 | GET | `/` | 公开 | — | `{service, status}` |
-| POST | `/api/auth/register` | 公开 | `{email, password 8-128, invite_code?}` | 201 `TokenOut` |
+| POST | `/api/auth/register` | 公开 | `{email, password 8-128（非弱密码）, invite_code?}` | 201 `TokenOut` |
 | POST | `/api/auth/login` | 公开 | `{email, password}` | `TokenOut` |
 | GET | `/api/auth/me` | 登录 | — | `MeOut`（含 `permissions[]`） |
 | PATCH | `/api/auth/me` | `account:update:self` | 资料字段至少一项 | `MeOut` |
@@ -90,7 +90,7 @@ Base URL：`https://linx-api-78i.pages.dev`（生产）。CORS `allow_origins=["
 | DELETE | `/api/admin/invite-codes/{code}` | `invite_code:delete:any` | — | `{code}` |
 | GET | `/api/admin/users` | `user:read:any` | `q?≤200`（邮箱模糊）、`role?`、`limit/offset` | `{items: AdminUserOut[], has_next, total}` |
 | PATCH | `/api/admin/users/{user_id}` | `user:update:any` | `{email?, role?, 资料字段?}` | `AdminUserOut` |
-| POST | `/api/admin/users/{user_id}/reset-password` | `user:reset_password:any` | `{password? 8-128}` | `{id, email, password, generated, password_reset_at}` |
+| POST | `/api/admin/users/{user_id}/reset-password` | `user:reset_password:any` | `{password? 8-128（非弱密码）}` | `{id, email, password, generated, password_reset_at}` |
 | DELETE | `/api/admin/users/{user_id}` | `user:delete:any` | — | `{id}` |
 | GET | `/api/admin/activity` | `activity:read:any` | `user_id?`、`type?: page_view\|heartbeat\|page_leave`、`from?`、`to?`、`limit/offset` | `{items: ActivityOut[], has_next}` |
 | GET | `/api/admin/analytics/summary` | `activity:read:any` | `days 1-90`（默认 7） | `AnalyticsSummaryOut` |
@@ -183,6 +183,17 @@ Base URL：`https://linx-api-78i.pages.dev`（生产）。CORS `allow_origins=["
 | `POST /auth/login` | 15 分钟固定窗口，每 IP 10 次、每账号 5 次（含成功登录，计数在查库前） | 429 `rate_limited` + `Retry-After` |
 | `GET /admin/analytics/summary` | 结果缓存 60 秒（key `analytics:summary:v1:<days>`）；缓存未命中时读账本 `analytics:ledger:v2` + 折叠 `cursor < id <= MAX(id)` 的尾巴，尾巴 > 500 行走全量重建 | 不报错，读到旧值 |
 
+## 密码策略
+
+注册和**管理员手动指定**的重置密码都走同一套策略；登录不重新校验，避免已有老密码被锁死。
+
+- 长度 8–128 个字符；纯空白直接拒绝。
+- 不在 20,000 条常见密码表内；大小写、leet 替换、尾随数字/符号归一化后仍命中就拒绝。
+- 不允许纯重复（`aaaaaaaa`）或连续字符（`abcdefgh` / `87654321`）。
+- 不允许包含账号邮箱完整地址或本地部分（本地部分至少 3 字符）。
+- 不允许包含站点名：`linx-zhang`、`linxzhang`、`linx-zhang.github.io`、`linx-api-78i`、`api-worker`。
+- 管理员重置留空时仍生成 16 位临时密码，不套用该策略。
+
 ## 错误码
 
 HTTP 状态只是传输层，业务含义看 `code`。
@@ -193,6 +204,7 @@ HTTP 状态只是传输层，业务含义看 `code`。
 | `validation_error` | 422 | 字段不合法；用了 `page`/`page_size` 也会撞这里 |
 | `invalid_email` | 422 | 邮箱格式不对 |
 | `invalid_password` | 422 | 密码长度不在 8–128 |
+| `weak_password` | 422 | 长度够但命中常见密码、邮箱前缀、站点名或重复/连续字符 |
 | `invalid_invite_code` | 400 / 409 | 邀请码无效 / 并发抢用 |
 | `invalid_invite_role` | 422 | 邀请码角色不是 `internal`/`admin` |
 | `email_exists` | 409 | 注册或改邮箱撞已有账号 |

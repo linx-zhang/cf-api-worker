@@ -29,13 +29,16 @@ from core.constants import (
     CODE_INVALID_CREDENTIALS,
     CODE_INVALID_INVITE_CODE,
     CODE_RATE_LIMITED,
+    CODE_WEAK_PASSWORD,
     DETAIL_EMAIL_EXISTS,
     DETAIL_INVALID_CREDENTIALS,
     DETAIL_INVITE_CODE_CONFLICT,
     DETAIL_INVITE_CODE_INVALID,
     DETAIL_LOGIN_RATE_LIMITED,
     DETAIL_REGISTER_RATE_LIMITED,
+    DETAIL_WEAK_PASSWORD,
 )
+from core.password_policy import password_issue
 from core.permissions import ACCOUNT_UPDATE_SELF, permissions_for_role
 from core.security import create_access_token
 from core.utils import utc_now
@@ -157,6 +160,14 @@ async def register(
     if payload.invite_code:
         invite = await _claim_invite(db, payload.invite_code.strip())
         role = invite["role"]
+
+    issue = password_issue(payload.password, email=payload.email)
+    if issue is not None:
+        raise ApiError(
+            CODE_WEAK_PASSWORD,
+            DETAIL_WEAK_PASSWORD.format(reason=issue),
+            422,
+        )
 
     password_hash = await hash_password(payload.password)
     try:

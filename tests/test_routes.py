@@ -23,6 +23,7 @@ from core.constants import (
     CODE_RATE_LIMITED,
     CODE_UNAUTHORIZED,
     CODE_VALIDATION_ERROR,
+    CODE_WEAK_PASSWORD,
 )
 
 ADMIN = "/api/admin/users"
@@ -108,6 +109,46 @@ def test_logout_bumps_the_invalidation_stamp(api):
         "SELECT token_invalidated_at FROM users WHERE id = ?", (user_id,)
     ).fetchone()["token_invalidated_at"]
     assert stamp is not None
+
+
+def test_register_rejects_a_common_password(api):
+    response = api.post(
+        "/api/auth/register",
+        {"email": "new@example.com", "password": "password123"},
+    )
+    assert response.status == 422
+    assert response.code == CODE_WEAK_PASSWORD
+    assert "commonly used" in response.json["detail"]
+
+
+def test_register_accepts_a_unique_password(api):
+    response = api.post(
+        "/api/auth/register",
+        {"email": "unique@example.com", "password": "Mango-Orbit-7421"},
+    )
+    assert response.status == 201
+    assert response.data["user"]["email"] == "unique@example.com"
+
+
+def test_admin_reset_rejects_a_weak_custom_password(api):
+    actor = api.seed_user("admin@example.com", "admin")
+    target = api.seed_user("target@example.com")
+    token = api.token(actor)
+    before = api.conn.execute(
+        "SELECT password_hash FROM users WHERE id = ?", (target,)
+    ).fetchone()["password_hash"]
+
+    response = api.post(
+        f"{ADMIN}/{target}/reset-password",
+        {"password": "password123"},
+        token=token,
+    )
+    assert response.status == 422
+    assert response.code == CODE_WEAK_PASSWORD
+    after = api.conn.execute(
+        "SELECT password_hash FROM users WHERE id = ?", (target,)
+    ).fetchone()["password_hash"]
+    assert before == after
 
 
 # ---- 权限 -------------------------------------------------------------------
