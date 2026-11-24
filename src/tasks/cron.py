@@ -2,16 +2,24 @@
 
 Wrangler fires two triggers today (``wrangler.jsonc``):
 
-- ``15 18 * * *`` — the nightly maintenance set (retention, cache purge, memo
-  tombstones) plus one ledger fold.
-- ``0 * * * *`` — hourly ledger fold only. Everything else is daily work and
-  would be pure waste twelve times a day.
+- ``15 18 * * *`` — the nightly maintenance set: activity retention, cache purge,
+  memo tombstones, consumable tombstones and dead resume share links.
+- ``0 * * * *`` — hourly analytics ledger fold only.
 
-So this module matches on the cron expression; ``entry.py`` stays dumb.
+The daily trigger deliberately does **not** fold the ledger: the hourly fold is
+45 minutes away, and ``load_summary`` folds the tail in memory on read, so a
+second fold here is duplicate work.
 
-The ledger fold is the only job whose *read* cost matters at request time: it
-runs the three tail aggregates, which scan exactly the rows that arrived since
-the last fold.
+Which data is intentionally **never** purged here:
+
+* ``users`` — accounts and audit trail; even soft-deleted rows stay.
+* ``resumes`` — resume documents; soft-deleted rows stay by product decision.
+* ``posts`` / ``comments`` — blog content; soft-deleted rows stay so posts and
+  discussion can be restored or inspected.
+* ``invite_codes`` — invite issuance/use history; small and worth keeping.
+
+Only disposable rows are deleted: old activity events, expired cache entries,
+old memo/consumable tombstones, invalid resume share tokens.
 """
 
 from __future__ import annotations
@@ -23,7 +31,12 @@ from infra.db import Database
 from tasks.activity_retention import purge_old_activity
 from tasks.analytics_ledger import persist_analytics_ledger
 from tasks.cache_cleanup import purge_expired_cache
+from tasks.consumable_tombstone import (
+    CONSUMABLE_TOMBSTONE_DAYS,
+    purge_consumable_tombstones,
+)
 from tasks.memo_tombstone import MEMO_TOMBSTONE_DAYS, purge_memo_tombstones
+from tasks.resume_share_cleanup import purge_invalid_resume_shares
 
 # Keep in sync with ``wrangler.jsonc`` -> triggers.crons.
 HOURLY_LEDGER_CRON = "0 * * * *"
@@ -80,25 +93,35 @@ async def _run_cron(env, cron: str = "cron") -> dict[str, int]:
     purged = await purge_expired_cache(db)
     print(f"cache purge ({cron}): removed {purged} expired entries")
 
-    # memo 墓碑最晚清理：它只影响个人空间的历史，晚一轮没有副作用
+    # 个人内容先清：memo 保留 180 天，比活动记录宽容得多
     tombstones = await purge_memo_tombstones(db, days=MEMO_TOMBSTONE_DAYS)
     print(
         f"memo tombstones ({cron}): removed {tombstones} rows "
         f"soft-deleted before -{MEMO_TOMBSTONE_DAYS} days"
     )
 
-    # 清理跑完再折叠：已经被删除的旧行不该再进入账本
-    ledger = await persist_analytics_ledger(db)
+    # 消耗品是结构化低价值记录，90 天足够覆盖误删；cycles 必须先于 items 删
+    consumables = await purge_consumable_tombstones(
+        db, days=CONSUMABLE_TOMBSTONE_DAYS
+    )
     print(
-        f"analytics ledger ({cron}): folded {ledger['folded']} rows, "
-        f"cursor {ledger['cursor']}, {ledger['days']} days, "
-        f"{ledger['actors']} actors"
-        + (" (rebuilt)" if ledger["rebuilt"] else "")
+        f"consumable tombstones ({cron}): removed {consumables['cycles']} cycles "
+        f"and {consumables['items']} items soft-deleted before "
+        f"-{CONSUMABLE_TOMBSTONE_DAYS} days"
     )
 
+    # 分享短链只是临时凭据：撤销、过期或指向已软删简历即删，没有缓冲期。
+    # 注意这里只删 resume_shares，resumes 自身的软删墓碑永远保留。
+    shares = await purge_invalid_resume_shares(db)
+    print(f"resume share cleanup ({cron}): removed {shares} invalid links")
+
+    # 不在这里折分析账本：小时触发器 45 分钟后会做，且管理页读取时会在内存补折 tail。
+    # users / resumes / posts / comments / invite_codes 是有价值的历史数据，永不清理。
     return {
         "activity_events": deleted,
         "cache_entries": purged,
         "memos": tombstones,
-        "analytics_ledger_rows": int(ledger["folded"] or 0),
+        "consumable_cycles": consumables["cycles"],
+        "consumable_items": consumables["items"],
+        "resume_shares": shares,
     }

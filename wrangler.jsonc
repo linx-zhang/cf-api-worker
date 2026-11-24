@@ -13,10 +13,11 @@
 	"observability": {
 		"enabled": true
 	},
-	// 活动记录保留清理：删除 activity_events 中 created_at 超过 30 天的行。
+	// 日更清理：activity 30 天、cache 过期、memos 180 天墓碑、
+	// 消耗品 90 天墓碑、失效简历分享短链立即删。
+	// users / resumes / posts / comments / invite_codes 是有价值的历史数据，永不清理。
 	// cron 走 UTC：18:15 UTC = 北京时间 02:15，避开访问高峰。
-	// 第二个触发器每小时折叠一次分析账本（services/analytics_ledger.py），
-	// 让页面读取只碰一行缓存 + 增量尾巴，而不是每次全表扫。
+	// 日更不再折分析账本：第二个触发器每小时折一次，管理页读取时也会在内存补折尾巴。
 	"triggers": {
 		"crons": ["15 18 * * *", "0 * * * *"]
 	},
