@@ -107,8 +107,8 @@ uv run --frozen python scripts/check-layers.py
 1. `tasks/<job>.py`：批处理、上限、返回删除行数。
 2. `tasks/cron.py`：按 cron 表达式挂到日更或小时触发器。
 3. `wrangler.jsonc`：确认触发表达式。
-4. `tests/test_cron.py`：失败日志与顺序。
-5. `AGENTS.md` 的「索引与清理任务现状」同步。
+4. `tests/test_cleanup.py`：清理顺序、保留期与不可清理数据；`tests/test_cron.py`：失败日志。
+5. `AGENTS.md` 的「索引与清理任务现状」同步，日更顺序与「永不清理」名单一起写。
 
 ### 新增共享常量
 
@@ -132,7 +132,8 @@ uv run --frozen python scripts/check-layers.py
 | `tests/test_analytics_ledger.py` | 账本与全量参考实现逐字段相等 |
 | `tests/test_responses.py` | 统一 envelope、500 日志、request id |
 | `tests/test_migrations.py` | 迁移命名/编号/非空 |
-| `tests/test_cron.py` | cron 失败日志与顺序 |
+| `tests/test_cleanup.py` | 墓碑保留期、cycles 先于 items、失效分享立即删、日更不折账本 |
+| `tests/test_cron.py` | cron 失败日志与触发表达式 |
 
 测试不启 workerd；`pywrangler dev` 只用于手工联调。部署后的冒烟仍是手敲，见 `AGENTS.md`。
 
