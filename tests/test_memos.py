@@ -81,3 +81,63 @@ def test_summary_counts_undated_rows(api):
     assert summary["done"] == 1
     assert summary["undated"] == 1
     assert summary["due"] >= 1
+
+
+def _memo_ids(response) -> list[int]:
+    return [int(row["id"]) for row in response.data["items"]]
+
+
+def test_pagination_is_stable_across_pages_and_filters(api):
+    """20 条一页，翻页只靠 offset；三页拼起来必须覆盖全集且不重复。"""
+    token = _token(api, "paging@example.com")
+
+    # 待办：25 条，带不同到期日，保证跨页边界。
+    pending_ids = [
+        _create(api, token, f"2026-12-{day:02d} 15:59:59", f"待办 {day}")
+        for day in range(1, 26)
+    ]
+    # 已完成：21 条，单独验证 done=true 的排序与分页。
+    done_ids = []
+    for index in range(1, 22):
+        memo_id = _create(api, token, None, f"已完成 {index}")
+        assert api.patch(f"/api/memos/{memo_id}", {"done": True}, token=token).status == 200
+        done_ids.append(memo_id)
+
+    first = _list(api, token, limit=20, offset=0)
+    second = _list(api, token, limit=20, offset=20)
+    third = _list(api, token, limit=20, offset=40)
+    assert [first.status, second.status, third.status] == [200, 200, 200]
+    assert first.data["has_next"] is True
+    assert second.data["has_next"] is True
+    assert third.data["has_next"] is False
+    all_ids = _memo_ids(first) + _memo_ids(second) + _memo_ids(third)
+    assert len(all_ids) == 46
+    assert len(set(all_ids)) == 46
+    assert set(all_ids) == set(pending_ids) | set(done_ids)
+
+    pending_first = _list(api, token, done="false", limit=20, offset=0)
+    pending_second = _list(api, token, done="false", limit=20, offset=20)
+    assert pending_first.data["has_next"] is True
+    assert pending_second.data["has_next"] is False
+    pending_page_ids = _memo_ids(pending_first) + _memo_ids(pending_second)
+    assert pending_page_ids == pending_ids
+    assert len(set(pending_page_ids)) == 25
+
+    done_first = _list(api, token, done="true", limit=20, offset=0)
+    done_second = _list(api, token, done="true", limit=20, offset=20)
+    assert done_first.data["has_next"] is True
+    assert done_second.data["has_next"] is False
+    done_page_ids = _memo_ids(done_first) + _memo_ids(done_second)
+    assert len(done_page_ids) == 21
+    assert set(done_page_ids) == set(done_ids)
+    assert _memo_ids(done_first) == list(reversed(done_ids))[:20]
+    assert _memo_ids(done_second) == [done_ids[0]]
+
+
+def test_offset_past_end_returns_empty_page(api):
+    token = _token(api, "paging-empty@example.com")
+    _create(api, token, None, "只有一条")
+
+    response = _list(api, token, limit=20, offset=20)
+    assert response.status == 200
+    assert response.data == {"items": [], "has_next": False}
