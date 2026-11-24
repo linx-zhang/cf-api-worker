@@ -97,6 +97,53 @@ def test_memo_tombstones_keep_180_days(api):
     assert _scalar(api, "SELECT COUNT(*) FROM memos") == 2
 
 
+def test_retention_boundaries_delete_only_rows_past_the_window(api):
+    user_id = api.seed_user("cleanup-boundary@example.com")
+
+    # memo：181 天删，179 天留（180 天保留期）
+    api.execute(
+        "INSERT INTO memos (user_id, body, deleted_at) "
+        "VALUES (?, '181 天', datetime('now', '-181 days'))",
+        (user_id,),
+    )
+    api.execute(
+        "INSERT INTO memos (user_id, body, deleted_at) "
+        "VALUES (?, '179 天', datetime('now', '-179 days'))",
+        (user_id,),
+    )
+
+    # 消耗品：91 天删，89 天留（90 天保留期）
+    api.execute(
+        "INSERT INTO consumable_items (id, user_id, name, deleted_at) "
+        "VALUES (20, ?, '91 天', datetime('now', '-91 days'))",
+        (user_id,),
+    )
+    api.execute(
+        "INSERT INTO consumable_cycles (id, item_id, started_on, deleted_at) "
+        "VALUES (200, 20, '2026-01-01', datetime('now', '-91 days'))"
+    )
+    api.execute(
+        "INSERT INTO consumable_items (id, user_id, name, deleted_at) "
+        "VALUES (21, ?, '89 天', datetime('now', '-89 days'))",
+        (user_id,),
+    )
+    api.execute(
+        "INSERT INTO consumable_cycles (id, item_id, started_on, deleted_at) "
+        "VALUES (201, 21, '2026-01-01', datetime('now', '-89 days'))"
+    )
+
+    assert asyncio.run(purge_memo_tombstones(db_of(), days=180)) == 1
+    assert asyncio.run(purge_consumable_tombstones(db_of(), days=90)) == {
+        "cycles": 1,
+        "items": 1,
+    }
+
+    assert _scalar(api, "SELECT COUNT(*) FROM memos") == 1
+    assert _scalar(api, "SELECT body FROM memos") == "179 天"
+    assert _scalar(api, "SELECT id FROM consumable_items") == 21
+    assert _scalar(api, "SELECT id FROM consumable_cycles") == 201
+
+
 def test_resume_shares_are_deleted_the_moment_they_are_dead(api):
     api.execute(
         "INSERT INTO resumes (id, title, content_html, deleted_at) "
