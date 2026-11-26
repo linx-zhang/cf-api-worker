@@ -426,7 +426,7 @@ async def finish_cycle(
         raise ApiError(
             CODE_VALIDATION_ERROR,
             DETAIL_CONSUMABLE_DATE_RANGE.format(reason="ended_on < started_on"),
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
         )
     await db.execute(
         "UPDATE consumable_cycles SET ended_on = ?, updated_at = datetime('now') "
@@ -467,13 +467,13 @@ async def update_cycle(
         raise ApiError(
             CODE_VALIDATION_ERROR,
             DETAIL_VALIDATION_ERROR.format(reason="started_on is required"),
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
         )
     if ended_on is not None and ended_on < started_on:
         raise ApiError(
             CODE_VALIDATION_ERROR,
             DETAIL_CONSUMABLE_DATE_RANGE.format(reason="ended_on < started_on"),
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
         )
     # 撤回「用完」等于重新打开这一轮；同一个物品不能同时有两轮开着
     if ended_on is None:

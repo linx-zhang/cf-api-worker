@@ -98,6 +98,8 @@ Invoke-WebRequest "https://api-worker.linx-zhang.workers.dev/api/posts?limit=3&o
 - D1 SQL **必须单行**（多行报 `incomplete input`）；`PRAGMA auto_vacuum/page_count/freelist_count` 被拒，`page_size` 可读。
 - 分页参数是 `limit`/`offset`（不是 `page`/`limit`）；业务路由统一在 `/api` 下（`app.py` 的 `API_PREFIX`，前端拼 `API_ROOT`），根路径只留给 `/` 健康检查与 `/docs`、`/openapi.json`。
 - 时间一律 UTC datetime 字符串 `YYYY-MM-DD HH:MM:SS`；唯一例外是消耗品周期（`consumable_cycles.started_on/ended_on`）与 `due_on`，它们是客户端本地日 `YYYY-MM-DD`，接口用 `today` 参数对齐时区。软删写 `datetime('now')`，读用 `deleted_at IS NULL`。
+- 422 状态常量统一用 `starlette.status.HTTP_422_UNPROCESSABLE_CONTENT`；旧的 `HTTP_422_UNPROCESSABLE_ENTITY` 已弃用，会重新带回 warning。
+- 测试里伪造 JWT 的 HS256 密钥至少写 32 字节（现用 `not-the-secret-but-32-bytes-long-0123456789`），短密钥会让 PyJWT 报 `InsecureKeyLengthWarning`，把 `pytest -q` 的干净输出破坏掉。
 
 ## 结构约定
 

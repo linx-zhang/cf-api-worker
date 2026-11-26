@@ -151,5 +151,5 @@ async def reject_legacy_paging(request: Request) -> None:
     raise ApiError(
         CODE_VALIDATION_ERROR,
         DETAIL_LEGACY_PAGING,
-        status.HTTP_422_UNPROCESSABLE_ENTITY,
+        status.HTTP_422_UNPROCESSABLE_CONTENT,
     )

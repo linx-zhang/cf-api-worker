@@ -62,7 +62,7 @@ def _due_bound(value: str | None, name: str) -> str | None:
         raise ApiError(
             CODE_VALIDATION_ERROR,
             DETAIL_VALIDATION_ERROR.format(reason=f"{name}: {exc}"),
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
         ) from None
 
 
@@ -121,7 +121,7 @@ async def list_memos(
         raise ApiError(
             CODE_VALIDATION_ERROR,
             DETAIL_VALIDATION_ERROR.format(reason="due_from must be <= due_to"),
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
         )
     if undated and (from_bound is not None or to_bound is not None):
         raise ApiError(
@@ -129,7 +129,7 @@ async def list_memos(
             DETAIL_VALIDATION_ERROR.format(
                 reason="undated=true cannot be combined with due bounds"
             ),
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
         )
 
     conditions = ["user_id = ?"]

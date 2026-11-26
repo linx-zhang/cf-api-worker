@@ -209,7 +209,7 @@ async def record_visitor_activity(
             raise ApiError(
                 CODE_INVALID_ACTIVITY_PATH,
                 DETAIL_ACTIVITY_PATH_REJECTED,
-                status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status.HTTP_422_UNPROCESSABLE_CONTENT,
             )
 
     context = _network_context(request)
@@ -218,7 +218,7 @@ async def record_visitor_activity(
         raise ApiError(
             CODE_INVALID_CLIENT_ADDRESS,
             DETAIL_ACTIVITY_ADDRESS_MISSING,
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
         )
 
     has_page_leave = any(event.type == "page_leave" for event in payload.events)

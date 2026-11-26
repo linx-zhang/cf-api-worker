@@ -69,7 +69,9 @@ def test_me_returns_permissions_of_the_role(api):
 def test_token_signed_with_another_secret_is_401(api):
     user_id = api.seed_user("forged@example.com")
     bad = jwt.encode(
-        {"sub": str(user_id), "iat": 0, "exp": 10**9}, "not-the-secret", algorithm="HS256"
+        {"sub": str(user_id), "iat": 0, "exp": 10**9},
+        "not-the-secret-but-32-bytes-long-0123456789",
+        algorithm="HS256",
     )
     response = api.get("/api/auth/me", token=bad)
     assert response.status == 401
